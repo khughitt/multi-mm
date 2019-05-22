@@ -1,0 +1,3 @@
+accession, gene_symbol_col, row_exclude_prefix, metadata_cols
+GSE6477, "Gene Symbol", "AFFX-", "geo_accession,title,description"
+GSE83503, 
