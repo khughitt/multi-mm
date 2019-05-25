@@ -41,30 +41,39 @@ sample_metadata <- pData(eset) %>%
 sample_metadata$disease = 'Multiple Myeloma'
 sample_metadata$cell_type = 'BM-CD138+'
 
-# map to ensgene and collapse multi-gene mapped probes
-expr_dat <- exprs(eset)
+# load expression data and add gene symbol column
+expr_dat <- as.data.frame(exprs(eset))
 
-# convert to ensembl gene ids (use first symbol listed..)
-gene_symbols <- str_split(fData(eset)$`Gene Symbol`, '///', simplify=TRUE)
-gene_symbols <- str_trim(gene_symbols[, 1])
-
-rownames(expr_dat) <- grch37$ensgene[match(gene_symbols, grch37$symbol)] 
-mask <- !is.na(rownames(expr_dat))
-message(sprintf("Dropping %d / %d probes which could not be mapped to Ensembl genes...",
-                sum(!mask), nrow(expr_dat)))
-expr_dat <- expr_dat[mask, ]
-
-# sum multi-mapped gene ids
-num_before <- nrow(expr_dat)
-expr_dat <- aggregate(expr_dat, list(rownames(expr_dat)), sum)
-rownames(expr_dat) <- expr_dat[, 1]
-expr_dat <- expr_dat[, -1]
-message(sprintf("%d / %d genes remain after averaging.", nrow(expr_dat), num_before))
+expr_dat <- expr_dat %>%
+  rownames_to_column('probe_id') %>%
+  add_column(gene_symbol = fData(eset)$`Gene Symbol`, .after = 1)
 
 # store cleaned expression data and metadata
-write.csv(expr_dat, file = file.path(clean_data_dir, sprintf('%s_expr.csv', accession)),
-          quote = FALSE, row.names = FALSE)
-write.csv(sample_metadata, file = file.path(clean_data_dir, 'sample_metadata.csv'),
-          quote = FALSE, row.names = FALSE)
+write_csv(expr_dat, path = file.path(clean_data_dir, sprintf('%s_expr.csv', accession)))
+write_csv(sample_metadata, 
+          file.path(clean_data_dir, sprintf('%s_sample_metadata.csv', accession)))
 
 sessionInfo()
+
+########################################################################################
+#
+# disabled..
+#
+# use first gene symbol
+# gene_symbols <- str_split(fData(eset)$`Gene Symbol`, '///', simplify=TRUE)
+# gene_symbols <- str_trim(gene_symbols[, 1])
+# ensgene <- grch37$ensgene[match(gene_symbols, gene_symbols)] 
+
+#mask <- !is.na(rownames(expr_dat))
+#message(sprintf("Dropping %d / %d probes which could not be mapped to Ensembl genes...",
+#                sum(!mask), nrow(expr_dat)))
+#expr_dat <- expr_dat[mask, ]
+
+# sum multi-mapped gene ids
+#num_before <- nrow(expr_dat)
+#expr_dat <- aggregate(expr_dat, list(rownames(expr_dat)), sum)
+#rownames(expr_dat) <- expr_dat[, 1]
+#expr_dat <- expr_dat[, -1]
+#message(sprintf("%d / %d genes remain after averaging.", nrow(expr_dat), num_before))
+########################################################################################
+
