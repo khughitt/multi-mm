@@ -19,7 +19,9 @@ output:
 2. For variance, etc. could try downloading a large number of "normal" (non-MM /
    non-cancer) samples and measure the same statistics. Then look for genes which have
    the highest variance in the MM samples, relative to healthy ones?
-
+3. Use RCellMiner, etc. to select drugs with various mechanisms and generated
+   gene weights targetted at each different type of drug mechanism?
+   
 # Overview
 
 ...
@@ -35,6 +37,8 @@ library(annotables)
 library(DataExplorer)
 library(diptest)
 library(e1071)
+library(GSEABase)
+library(fgsea)
 library(heatmaply)
 library(inspectdf)
 library(knitr)
@@ -46,7 +50,7 @@ library(tidyverse)
 ```
 
 ```{r}
-options(warn = 2)
+#options(warn = 2)
 options(digits = 3)
 options(stringsAsFactors = FALSE)
 set.seed(1)
@@ -128,6 +132,7 @@ factor_covariates <- list(
   "GSE2658"   = c('deceased', 'patient_subgroup'),
   "GSE6477"   = c('mm_stage'),
   "GSE68871"  = c('treatment_response'),
+  "GSE7039"   = c('deceased'),
   "GSE83503"  = c('death', 'relapse'),
   "GSE9782"   = c('pgx_response', 'pgx_responder'),
   "GSE24080"  = c('efs_event', 'os_event')
@@ -139,7 +144,8 @@ survival_covariates <- list(
   "GSE19784" = list('os'  = c('os_months', 'os_event'),
                     'pfs' = c('pfs_months', 'pfs_event')),
   "GSE9782"  = list('os'  = c('os_days', 'os_censor'),
-                    'pfs' = c('pfs_days', 'pfs_censor'))
+                    'pfs' = c('pfs_days', 'pfs_censor')),
+  "GSE7039"  = list('os'  = c('follow_up_days', 'deceased'))
 )
 
 # keep track of the number of samples in each dataset
@@ -289,7 +295,6 @@ for (acc in accessions) {
   colnames(gene_weights)[ind] <- paste0(acc, '_', colnames(gene_weights)[ind])
 
   write_csv(gene_weights, outfile)
-}
 }
 ```
 
@@ -516,6 +521,24 @@ dat <- dat[, c(id_cols, colnames(dat)[!colnames(dat) %in% id_cols])]
 write_csv(dat, 'output/combined_gene_weights.csv')
 ```
 
+```{r load_gene_sets}
+annot_dir <- '/data/annotations/'
+
+msigdb_files  <- sprintf('%s.all.v6.2.symbols.gmt', c('h', 'c2', 'c5', 'c6', 'c7'))
+bader_files   <- c('Human_DrugBank_all_symbol.gmt', 'Human_NCI_Nature_April_01_2019_symbol.gmt')
+enrichr_files <- c('LINCS_L1000_Ligand_Perturbations_down.txt',
+                   'Kinase_Perturbations_from_GEO_up.txt', 'DSigDB.txt',
+                   'OMIM_Disease.txt')
+
+gene_set_files <- c(
+  file.path(annot_dir, 'msigdb', 'v6.2', msigdb_files),
+  file.path(annot_dir, 'bader_gene_sets', bader_files),
+  file.path(annot_dir, 'enrichr', enrichr_files)
+)
+gene_sets <- lapply(gene_set_files, function(x) { geneIds(getGmt(x)) })
+
+names(gene_sets) <- basename(gene_set_files)
+```
 
 ```{r results = 'asis', include = FALSE, eval = FALSE}
 ### Datasets included
@@ -631,8 +654,8 @@ plot_density(dat, ggtheme = theme_bw_high_res(), parallel = TRUE)
 #### Dataset / Gene Weight Measure Similarity
 
 ```{r, fig.width = 6, fig.height = 4.8}
-theme_conf <- theme(axis.text.x = element_text(size = 3),
-                    axis.text.y = element_text(angle = 90, size = 2, hjust = 1))
+theme_conf <- theme(axis.text.x = element_text(angle = 90, size = 3, hjust = 1),
+                    axis.text.y = element_text(size = 3))
 plot_correlation(dat, type = 'continuous', ggtheme = theme_bw_high_res(),
                  cor_args = list(use = 'pairwise.complete.obs'), theme_config =
                    theme_conf)
@@ -693,6 +716,20 @@ kable(head(sort(rowMeans(covariate_dat_log10pvals, na.rm = TRUE), decreasing = T
 
 ```{r}
 stopCluster(cl)
+```
+
+```{r fgsea, results = 'asis'}
+for (gs in names(gene_sets)) {
+	res <- fgsea(gene_sets[[gs]], xx, nperm = 10000, nproc = num_threads) %>%
+		filter(padj < 0.05) %>%
+		select(-leadingEdge) %>%
+		arrange(padj)
+
+	if (nrow(res) > 0) {
+    cat(sprintf("\n##### %s\n", gs))
+	  print(kable(head(res, 20)))
+	}
+}
 ```
 
 ```{r}

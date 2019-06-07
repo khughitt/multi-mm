@@ -44,7 +44,8 @@ sample_metadata <- pData(esets[[1]]) %>%
   mutate(patient_id = sub('_A', '', title)) %>%
   select(geo_accession, platform_id, patient_id) %>%
   inner_join(survival_dat, by = 'patient_id') %>%
-  add_column(geo_accession2 = pData(esets[[2]])$geo_accession, .after = 1)
+  add_column(geo_accession2 = pData(esets[[2]])$geo_accession, .after = 1) %>%
+  mutate(deceased = ifelse(deceased == 'yes', 1, 0))
 
 #all(sample_metadata$patient_id == sub('_B', '', pData(esets[[2]])$title))
 # [1] TRUE
