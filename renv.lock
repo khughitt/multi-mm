@@ -92,6 +92,12 @@ Version=1.03.1
 Source=CRAN
 Hash=565c28ef3a970cc20df0b4459a605926
 
+[R/Package/GSEABase]
+Package=GSEABase
+Version=1.46.0
+Source=Bioconductor
+Hash=aae75f4fe2d13291fcb2570ed59a0d62
+
 [R/Package/GenomeInfoDb]
 Package=GenomeInfoDb
 Version=1.20.0
@@ -112,9 +118,9 @@ Hash=2b835aeef94befbd32e9032af1375924
 
 [R/Package/IRanges]
 Package=IRanges
-Version=2.18.0
+Version=2.18.1
 Source=Bioconductor
-Hash=c54f8c3a996ebf90fcab9ba0f12b0ae6
+Hash=8745f09580786c392a46efe8788e6bee
 
 [R/Package/MASS]
 Package=MASS
@@ -184,9 +190,9 @@ Hash=2f50767110c18df9c8a0d9c2e598806d
 
 [R/Package/XML]
 Package=XML
-Version=3.98-1.19
+Version=3.98-1.20
 Source=CRAN
-Hash=49adc32e27fdc73936513d17a761dfc6
+Hash=ac71a10010791206fc0d36398b030f01
 
 [R/Package/XVector]
 Package=XVector
@@ -217,6 +223,12 @@ RemoteUsername=stephenturner
 RemoteRef=master
 RemoteSha=805a247f2ec9cfe38b744d2146f7a5bd58c6c496
 Hash=17a6e18d40e814e26f87cec8a2e05ec2
+
+[R/Package/annotate]
+Package=annotate
+Version=1.62.0
+Source=Bioconductor
+Hash=c37b5b067a4ff1f8f9b9a66d881ea56e
 
 [R/Package/askpass]
 Package=askpass
@@ -352,9 +364,9 @@ Hash=9877f56dda88827d0c0e24de3bee3d73
 
 [R/Package/dbplyr]
 Package=dbplyr
-Version=1.4.0
+Version=1.4.1
 Source=CRAN
-Hash=4b912d262bc7487e0de111a4f6f1bc3c
+Hash=727bebd03430076b64a2b30ed6fada6b
 
 [R/Package/dendextend]
 Package=dendextend
@@ -382,9 +394,9 @@ Hash=f12a3d93821301ac73c0e6337f58a4da
 
 [R/Package/e1071]
 Package=e1071
-Version=1.7-1
+Version=1.7-2
 Source=CRAN
-Hash=1993f622b00e01f3458e2e16d7395a09
+Hash=5c30d69e02250bc054d09e689ebed534
 
 [R/Package/ellipsis]
 Package=ellipsis
@@ -400,9 +412,9 @@ Hash=8c118530d3cb134162e7cea434f48aa4
 
 [R/Package/evaluate]
 Package=evaluate
-Version=0.13
+Version=0.14
 Source=CRAN
-Hash=e5383cdfb2c6dfd5a04f91466f3c78e9
+Hash=a55f044b6c5ca0f626e5ddcea5482c58
 
 [R/Package/fansi]
 Package=fansi
@@ -410,11 +422,23 @@ Version=0.4.0
 Source=CRAN
 Hash=a7730510208607abde04cfe3808e78e0
 
+[R/Package/fastmatch]
+Package=fastmatch
+Version=1.1-0
+Source=CRAN
+Hash=7b9fe509c55d7be6ae52ce32496c8655
+
 [R/Package/ff]
 Package=ff
 Version=2.2-14
 Source=CRAN
 Hash=415b0a04bd29a62c0ce3c0e311c46a0b
+
+[R/Package/fgsea]
+Package=fgsea
+Version=1.10.0
+Source=Bioconductor
+Hash=f65d0bf0fa7a3894ea18e20059bf9ce8
 
 [R/Package/forcats]
 Package=forcats
@@ -487,6 +511,12 @@ Package=gplots
 Version=3.0.1.1
 Source=CRAN
 Hash=4496dc9b02948ff2f34f3981df03176d
+
+[R/Package/graph]
+Package=graph
+Version=1.62.0
+Source=Bioconductor
+Hash=7fdae0b54132f611202dafde5b066075
 
 [R/Package/gridExtra]
 Package=gridExtra
@@ -756,9 +786,9 @@ Hash=8941e2295d3316e19095f2cfe9c04421
 
 [R/Package/numDeriv]
 Package=numDeriv
-Version=2016.8-1
+Version=2016.8-1.1
 Source=CRAN
-Hash=bee90c445c73e0dc480ad033acb4f37f
+Hash=241ae40a7db6075ddd4c835dc3ef688f
 
 [R/Package/oligo]
 Package=oligo
@@ -774,9 +804,9 @@ Hash=74069163eae508191da4aa23232f1b68
 
 [R/Package/openssl]
 Package=openssl
-Version=1.3
+Version=1.4
 Source=CRAN
-Hash=412ae4d99b071b07486b2ca1168d7898
+Hash=48cb784b7a1575c20103565139f20b17
 
 [R/Package/openxlsx]
 Package=openxlsx
@@ -798,9 +828,9 @@ Hash=06aed85ddcc6fcb0998d290da988b176
 
 [R/Package/pillar]
 Package=pillar
-Version=1.4.0
+Version=1.4.1
 Source=CRAN
-Hash=050f6d2762e40d0fc2ae64c8a103c364
+Hash=dc8a298f39a0d5e25c761759a92d9130
 
 [R/Package/pkgconfig]
 Package=pkgconfig
@@ -954,9 +984,9 @@ Hash=1fb5dfb3e338005d14339d1f89fbc15c
 
 [R/Package/seriation]
 Package=seriation
-Version=1.2-3
+Version=1.2-6
 Source=CRAN
-Hash=e6e5782acbbee806dd260ec19342ff43
+Hash=4bf03c24c77b4062e912e1a022ab2a45
 
 [R/Package/shiny]
 Package=shiny
@@ -1014,9 +1044,9 @@ Hash=0c43bba658518eeb02b857c8e82de3ee
 
 [R/Package/tibble]
 Package=tibble
-Version=2.1.1
+Version=2.1.3
 Source=CRAN
-Hash=d9ba62e3a7d5bc3a30a4361fd0e769dc
+Hash=3567fcd850473b5f181da50fac258fb9
 
 [R/Package/tidyr]
 Package=tidyr
