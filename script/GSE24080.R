@@ -77,7 +77,7 @@ efs <- as.numeric(endsWith(pData(eset)[, 'efs milestone outcome (24 months):ch1'
 os  <- as.numeric(endsWith(pData(eset)[, 'os milestone outcome (24 months):ch1'], '0')) 
 
 sample_metadata <- pData(eset) %>%
-  select(sample_id = geo_accession, platform_id, 
+  select(geo_accession, platform_id, 
          gender=`Sex:ch1`,
          age=`age:ch1`,
          maqc_status=`maqc_distribution_status:ch1`) %>%
@@ -97,8 +97,8 @@ expr_dat <- exprs(eset) %>%
   add_column(gene_symbol = gene_symbols, .after = 1)
 
 # determine filenames to use for outputs and save to disk
-expr_outfile <- sprintf('%s_1_expr.csv', accession)
-sample_outfile <- sprintf('%s_1_sample_metadata.csv', accession)
+expr_outfile <- sprintf('%s_expr.csv', accession)
+sample_outfile <- sprintf('%s_sample_metadata.csv', accession)
 
 # store cleaned expression data and metadata
 write_csv(expr_dat, file.path(clean_data_dir, expr_outfile))

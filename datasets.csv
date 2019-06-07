@@ -1,3 +1,2 @@
-accession, gene_symbol_col, row_exclude_prefix, metadata_cols
-GSE6477, "Gene Symbol", "AFFX-", "geo_accession,title,description"
-GSE83503, 
+accession,sample_type,disease,disease_stage,tissue,platform
+GSE9782,patient,multiple myeloma,relapsed,tumor,GPL96

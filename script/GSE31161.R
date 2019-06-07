@@ -76,7 +76,7 @@ for (cname in colnames(pData(eset))) {
 
 # columns to include (GSE31161)
 sample_metadata <- pData(eset) %>%
-  select(sample_id = geo_accession, platform_id)
+  select(geo_accession, platform_id)
 
 # add cell type and disease (same for all samples)
 sample_metadata$disease = 'Multiple Myeloma'
@@ -92,8 +92,8 @@ expr_dat <- exprs(eset) %>%
   add_column(gene_symbol = gene_symbols, .after = 1)
 
 # determine filenames to use for outputs and save to disk
-expr_outfile <- sprintf('%s_1_expr.csv', accession)
-sample_outfile <- sprintf('%s_1_sample_metadata.csv', accession)
+expr_outfile <- sprintf('%s_expr.csv', accession)
+sample_outfile <- sprintf('%s_sample_metadata.csv', accession)
 
 # store cleaned expression data and metadata
 write_csv(expr_dat, file.path(clean_data_dir, expr_outfile))

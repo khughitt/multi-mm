@@ -61,143 +61,154 @@ esets <- getGEO(accession, destdir = raw_data_dir, AnnotGPL = TRUE)
 # report data processing used
 print(as.character(pData(esets[[1]])$data_processing[1]))
 
-for (i in 1:length(esets)) {
-  eset <- esets[[i]]
+# 
+# Note: some of the metadata fields appear to be incorrectly encoded, e.g.:
+#
+# > pData(eset)[, 'characteristics_ch1.9']                                                     
+# [1] PGx_Days_To_Progression = 87           PGx_Progression(0=No,1=Yes) = 1                 
+# [3] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1                 
+# [5] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1                 
+# [7] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1                 
+# [9] PGx_CensorReason = No more data        PGx_Progression(0=No,1=Yes) = 1  
 
-  # list the columns that are neither all different or all unique
-  covariates <- c()
+# to get around this, we will manually detect and parse those fields..
+sample_metadata <- pData(esets[[1]]) %>%
+mutate(
+  study_code      = as.numeric(str_match(characteristics_ch1, '\\d+$')),
+  treatment       = str_match(characteristics_ch1.1, '\\w+$'),
+  gender          = str_match(characteristics_ch1.2, '\\w+$'),
+  ethnicity       = str_match(characteristics_ch1.3, '\\w+$'),
+  age             = as.numeric(str_match(characteristics_ch1.4, '\\d+$')),
+  pgx_response    = str_match(characteristics_ch1.7, '\\w+$'), 
+  pgx_responder   = str_match(characteristics_ch1.8, '\\w+$')) %>%
+select(geo_accession, platform_id, study_code, treatment, gender,
+        ethnicity, age, pgx_response, pgx_responder) %>%
+add_column(geo_accession2 = pData(esets[[2]])$geo_accession, .after = 1)
 
-  for (cname in colnames(pData(eset))) {
-    num_vals <- length(table(pData(eset)[, cname]))
+# convert metadata from factor to character columns for parsing
+str_mdat <- pData(esets[[1]]) 
 
-    if (num_vals != 1 && num_vals != ncol(eset)) {
-      covariates <- c(covariates, cname)
-
-      message(cname)
-      print(table(pData(eset)[, cname]))
-    }
-  }
-
-  # GSE9782 has *not* been adjusted for sample size..
-  #range(colSums(exprs(eset)))
-  # [1] 5772391 9324047
-
-  # perform size-factor normalization
-  exprs(eset) <- sweep(exprs(eset), 2, colSums(exprs(eset)), '/') * 1E6
-
-  # exclude control sequences present in some datasets
-  eset <- eset[!startsWith(rownames(eset), 'AFFX-'), ]
-
-  # 
-  # Note: some of the metadata fields appear to be incorrectly encoded, e.g.:
-  #
-  # > pData(eset)[, 'characteristics_ch1.9']                                                     
-  # [1] PGx_Days_To_Progression = 87           PGx_Progression(0=No,1=Yes) = 1                 
-  # [3] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1                 
-  # [5] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1                 
-  # [7] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1                 
-  # [9] PGx_CensorReason = No more data        PGx_Progression(0=No,1=Yes) = 1  
-
-  #
-  # to get around this, we will manually detect and parse those fields..
-  #
-
-  sample_metadata <- pData(eset) %>%
-    mutate(
-      study_code      = as.numeric(str_match(characteristics_ch1, '\\d+$')),
-      treatment       = str_match(characteristics_ch1.1, '\\w+$'),
-      gender          = str_match(characteristics_ch1.2, '\\w+$'),
-      ethnicity       = str_match(characteristics_ch1.3, '\\w+$'),
-      age             = as.numeric(str_match(characteristics_ch1.4, '\\d+$')),
-      pgx_response    = str_match(characteristics_ch1.7, '\\w+$'), 
-      pgx_responder   = str_match(characteristics_ch1.8, '\\w+$')) %>%
-    select(sample_id = geo_accession, platform_id, study_code, treatment, gender,
-           ethnicity, age, pgx_response, pgx_responder)
-
-  # convert metadata from factor to character columns for parsing
-  str_mdat <- pData(eset)
-
-  for (cname in colnames(str_mdat)) {
-    str_mdat[, cname] <- as.character(str_mdat[, cname])
-  }
-
-  pfs_censor <- c()
-  pfs_days <- c()
-  pfs_censor_reason <- c()
-  os_censor <- c()
-  os_days <- c()
-
-  # iterate over samples and find relevant information
-  for (sample_num in 1:nrow(pData(eset))) {
-    # PGx Progression
-    ind <- which(grepl('PGx_Prog', str_mdat[sample_num, ]))
-
-    if (length(ind) == 0) {
-      pfs_censor <- c(pfs_censor, 0)
-    } else {
-      pfs_censor <- c(pfs_censor, ifelse(endsWith(str_mdat[sample_num, ind], '1'), 1, 0))
-    }
-
-    # PGx days
-    ind <- which(grepl('PGx_Days', str_mdat[sample_num, ]))
-
-    if (length(ind) == 0) {
-      pfs_days <- c(pfs_days, NA)
-    } else {
-      pfs_days <- c(pfs_days, as.numeric(str_match(str_mdat[sample_num, ind], '\\d+$')))
-    }
-
-    # PGx Censor Reason
-    ind <- which(grepl('PGx_CensorReason', str_mdat[sample_num, ]))
-
-    if (length(ind) == 0) {
-        pfs_censor_reason <- c(pfs_censor_reason, NA)
-    } else {
-      pfs_censor_reason <- c(pfs_censor_reason, trimws(str_match(str_mdat[sample_num, ind], '[ \\w]+$')))
-    }
-
-    # Deceased
-    ind <- which(grepl('Did_Patient_Die', str_mdat[sample_num, ]))
-
-    if (length(ind) == 0) {
-      os_censor <- c(os_censor, 0)
-    } else {
-      os_censor <- c(os_censor, 1)
-    }
-
-    # Days Survived
-    ind <- which(grepl('Days_Survived', str_mdat[sample_num, ]))
-    os_days <- c(os_days, as.numeric(str_match(str_mdat[sample_num, ind], '\\d+$')))
-  }
-
-  # add to sample metadata
-  sample_metadata$pfs_days <- pfs_days
-  sample_metadata$pfs_censor <- pfs_censor
-  sample_metadata$pfs_censor_reason <- pfs_censor_reason
-  sample_metadata$os_days <- os_days
-  sample_metadata$os_censor <- os_censor
-
-  # add cell type and disease (same for all samples)
-  sample_metadata$disease = 'Multiple Myeloma'
-  sample_metadata$cell_type = NA # likely CD138+, but not 100% clear
-
-  # get gene symbols
-  gene_symbols <- fData(eset)$`Gene symbol`
-
-  # get expression data and add gene symbol column
-  expr_dat <- exprs(eset) %>%
-    as.data.frame %>%
-    rownames_to_column('probe_id') %>%
-    add_column(gene_symbol = gene_symbols, .after = 1)
-
-  # determine filenames to use for outputs and save to disk
-  expr_outfile <- sprintf('%s_%d_expr.csv', accession, i)
-  sample_outfile <- sprintf('%s_%d_sample_metadata.csv', accession, i)
-
-  # store cleaned expression data and metadata
-  write_csv(expr_dat, file.path(clean_data_dir, expr_outfile))
-  write_csv(sample_metadata, file.path(clean_data_dir, sample_outfile))
+for (cname in colnames(str_mdat)) {
+  str_mdat[, cname] <- as.character(str_mdat[, cname])
 }
+
+pfs_censor <- c()
+pfs_days <- c()
+pfs_censor_reason <- c()
+os_censor <- c()
+os_days <- c()
+
+# iterate over samples and find relevant information
+for (sample_num in 1:nrow(pData(esets[[1]]))) {
+  # PGx Progression
+  ind <- which(grepl('PGx_Prog', str_mdat[sample_num, ]))
+
+  if (length(ind) == 0) {
+    pfs_censor <- c(pfs_censor, 0)
+  } else {
+    pfs_censor <- c(pfs_censor, ifelse(endsWith(str_mdat[sample_num, ind], '1'), 1, 0))
+  }
+
+  # PGx days
+  ind <- which(grepl('PGx_Days', str_mdat[sample_num, ]))
+
+  if (length(ind) == 0) {
+    pfs_days <- c(pfs_days, NA)
+  } else {
+    pfs_days <- c(pfs_days, as.numeric(str_match(str_mdat[sample_num, ind], '\\d+$')))
+  }
+
+  # PGx Censor Reason
+  ind <- which(grepl('PGx_CensorReason', str_mdat[sample_num, ]))
+
+  if (length(ind) == 0) {
+      pfs_censor_reason <- c(pfs_censor_reason, NA)
+  } else {
+    pfs_censor_reason <- c(pfs_censor_reason, trimws(str_match(str_mdat[sample_num, ind], '[ \\w]+$')))
+  }
+
+  # Deceased
+  ind <- which(grepl('Did_Patient_Die', str_mdat[sample_num, ]))
+
+  if (length(ind) == 0) {
+    os_censor <- c(os_censor, 0)
+  } else {
+    os_censor <- c(os_censor, 1)
+  }
+
+  # Days Survived
+  ind <- which(grepl('Days_Survived', str_mdat[sample_num, ]))
+  os_days <- c(os_days, as.numeric(str_match(str_mdat[sample_num, ind], '\\d+$')))
+}
+
+# add to sample metadata
+sample_metadata$pfs_days <- pfs_days
+sample_metadata$pfs_censor <- pfs_censor
+sample_metadata$pfs_censor_reason <- pfs_censor_reason
+sample_metadata$os_days <- os_days
+sample_metadata$os_censor <- os_censor
+
+# add cell type and disease (same for all samples)
+sample_metadata$disease = 'Multiple Myeloma'
+sample_metadata$cell_type = NA # likely CD138+, but not 100% clear
+
+# GSE9782 has *not* been adjusted for sample size..
+#range(colSums(exprs(eset)))
+# [1] 5772391 9324047
+
+# for GSE7039, data includes two separate esets with a small number of overlapping
+# probes
+e1 <- exprs(esets[[1]])
+e2 <- exprs(esets[[2]])
+
+gene_symbols1 <- fData(esets[[1]])[, 'Gene symbol']
+gene_symbols2 <- fData(esets[[2]])[, 'Gene symbol']
+
+# adjust for size separately and then combine
+e1 <- sweep(e1, 2, colSums(e1), '/') * 1E6
+e2 <- sweep(e2, 2, colSums(e2), '/') * 1E6
+
+mask1 <- !startsWith(rownames(e1), 'AFFX-')
+mask2 <- !startsWith(rownames(e2), 'AFFX-')
+
+e1 <- e1[mask1, ]
+e2 <- e2[mask2, ]
+
+gene_symbols1 <- gene_symbols1[mask1]
+gene_symbols2 <- gene_symbols2[mask2]
+
+# small number of shared probes exist...
+#length(intersect(rownames(e1), rownames(e2)))
+# [1] 168
+
+#head(intersect(rownames(e1), rownames(e2)))
+# [1] "200000_s_at" "200001_at"   "200002_at"   "200003_s_at" "200004_at"   "200005_at"  
+
+# use average values for those probes..
+shared_probes <- intersect(rownames(e1), rownames(e2))
+
+e1[shared_probes, ] <- (e1[shared_probes, ] + e2[shared_probes, ]) / 2
+
+mask <- !rownames(e2) %in% shared_probes
+e2 <- e2[mask, ]
+gene_symbols2 <- gene_symbols2[mask]
+
+expr_dat <- rbind(e1, e2)
+gene_symbols <- c(gene_symbols1, gene_symbols2)
+
+# get expression data and add gene symbol column
+expr_dat <- expr_dat %>%
+  as.data.frame %>%
+  rownames_to_column('probe_id') %>%
+  add_column(gene_symbol = gene_symbols, .after = 1)
+
+# determine filenames to use for outputs and save to disk
+expr_outfile <- sprintf('%s_expr.csv', accession)
+sample_outfile <- sprintf('%s_sample_metadata.csv', accession)
+
+# store cleaned expression data and metadata
+write_csv(expr_dat, file.path(clean_data_dir, expr_outfile))
+write_csv(sample_metadata, file.path(clean_data_dir, sample_outfile))
 
 sessionInfo()
 

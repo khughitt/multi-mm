@@ -73,7 +73,7 @@ for (cname in colnames(pData(eset))) {
 
 # get relevant sample metadata
 sample_metadata <- pData(eset) %>%
-  select(sample_id = geo_accession, platform_id, iss_stage = `iss:ch1`,
+  select(geo_accession, platform_id, iss_stage = `iss:ch1`,
          patient_subgroup = `cluster:ch1`)
 
 # add cell type and disease (same for all samples)
@@ -88,15 +88,15 @@ sample_metadata$cell_type = 'BM-CD138+'
 survival_mdata <- read_csv(file.path(base_dir, 'metadata', 'kuiper2012_supp_patient_survival.csv'))
 
 survival_mdata <- survival_mdata %>%
-  rename(sample_id = Patient) %>%
-  filter(sample_id %in% colnames(eset))
+  rename(geo_accession = Patient) %>%
+  filter(geo_accession %in% colnames(eset))
 
-colnames(survival_mdata) <- c('sample_id', 'os_months', 'os_event', 'pfs_months', 'pfs_event')
+colnames(survival_mdata) <- c('geo_accession', 'os_months', 'os_event', 'pfs_months', 'pfs_event')
 
 # exclude samples without metadata
-mask <- sample_metadata$sample_id %in% survival_mdata$sample_id
+mask <- sample_metadata$geo_accession %in% survival_mdata$geo_accession
  
-#all(colnames(eset) == sample_metadata$sample_id)
+#all(colnames(eset) == sample_metadata$geo_accession)
 # [1] TRUE
 
 eset <- eset[, mask]
@@ -104,7 +104,7 @@ sample_metadata <- sample_metadata[mask, ]
 
 # combine metadata
 sample_metadata <- sample_metadata %>%
-  inner_join(survival_mdata, by = 'sample_id')
+  inner_join(survival_mdata, by = 'geo_accession')
 
 # load expression data and add gene symbol column
 expr_dat <- as.data.frame(exprs(eset))
@@ -114,9 +114,9 @@ expr_dat <- expr_dat %>%
   add_column(gene_symbol = fData(eset)$`Gene symbol`, .after = 1)
 
 # store cleaned expression data and metadata
-write_csv(expr_dat, path = file.path(clean_data_dir, sprintf('%s_1_expr.csv', accession)))
+write_csv(expr_dat, path = file.path(clean_data_dir, sprintf('%s_expr.csv', accession)))
 write_csv(sample_metadata, 
-          file.path(clean_data_dir, sprintf('%s_1_sample_metadata.csv', accession)))
+          file.path(clean_data_dir, sprintf('%s_sample_metadata.csv', accession)))
 
 sessionInfo()
 

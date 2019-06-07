@@ -73,7 +73,7 @@ eset <- eset[, num_missing == 0]
 
 # columns to include (GSE2658)
 sample_metadata <- pData(eset) %>%
-  select(sample_id = geo_accession, platform_id, 
+  select(geo_accession, platform_id, 
          deceased = characteristics_ch1,
          patient_subgroup = characteristics_ch1.8, characteristics_ch1.10) %>%
          mutate(contaminated = characteristics_ch1.10 == '[Subgrp7=MY]') %>%
@@ -86,7 +86,7 @@ sample_metadata <- sample_metadata %>%
   filter(!contaminated) %>%
   select(-contaminated)
 
-mask <- colnames(eset) %in% sample_metadata$sample_id
+mask <- colnames(eset) %in% sample_metadata$geo_accession
 
 #table(mask)
 # mask
@@ -109,8 +109,8 @@ expr_dat <- exprs(eset) %>%
   add_column(gene_symbol = gene_symbols, .after = 1)
 
 # determine filenames to use for outputs and save to disk
-expr_outfile <- sprintf('%s_1_expr.csv', accession)
-sample_outfile <- sprintf('%s_1_sample_metadata.csv', accession)
+expr_outfile <- sprintf('%s_expr.csv', accession)
+sample_outfile <- sprintf('%s_sample_metadata.csv', accession)
 
 # store cleaned expression data and metadata
 write_csv(expr_dat, file.path(clean_data_dir, expr_outfile))

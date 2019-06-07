@@ -46,7 +46,7 @@ library(tidyverse)
 ```
 
 ```{r}
-options(warn = 2) # DEV
+options(warn = 2)
 options(digits = 3)
 options(stringsAsFactors = FALSE)
 set.seed(1)
@@ -88,8 +88,6 @@ GENE_MAX_MISSING_COVARIATES <- 2
   - cell line vs. patient
   - size
   - response measure type
-- MMRF
-  - MAD outlier due to RNA-Seq / presence of many low-count genes?
 - Visualize some examples at each step? (e.g. compare count distributions for a single
   gene with high dip test?)
 
@@ -152,154 +150,146 @@ for (acc in accessions) {
   # load gene expression data
   data_dir <- file.path(base_dir, acc, 'processed')
 
-  # determine how many datasets are associated with the accession; usually just one
-  num_datasets <- length(Sys.glob(file.path(data_dir, '*_expr*.csv')))
+  message(sprintf("Processing dataset %s", acc))
 
-  for (dataset_num in 1:num_datasets) {
-    message(sprintf("Processing dataset %s (%d / %d)", acc, dataset_num, num_datasets))
+  # filenames
+  expr_infile <- file.path(data_dir, sprintf("%s_expr.csv", acc))
+  mdat_infile <- file.path(data_dir, sprintf("%s_sample_metadata.csv", acc))
 
-    # determine variable name prefix to use
-    dataset_prefix <- sprintf("%s_%s", acc, dataset_num)
+  outfile <- file.path('output', sprintf('gene_weights_%s.csv', acc))
 
-    # filenames
-    expr_infile <- file.path(data_dir, sprintf("%s_expr.csv", dataset_prefix))
-    mdat_infile <- file.path(data_dir, sprintf("%s_sample_metadata.csv",
-                                               dataset_prefix))
-
-    outfile <- file.path('output', sprintf('gene_weights_%s_%d.csv', acc, dataset_num))
-
-    # if the gene weights have already been computed, load from file and continue
-    if (file.exists(outfile)) {
-			message(sprintf("Skipping %s; output already exists...", acc))
-      next
-    }
-
-    # otherwise load gene expression data and sample metadata and compute weights
-    expr <- read_csv(expr_infile)
-
-    # data size
-    dataset_sizes <- rbind(dataset_sizes, c(dataset_prefix, ncol(expr) - 2))
-
-    # create a version without the gene / probe identifiers
-    expr_mat <- as.matrix(expr[, !colnames(expr) %in% c('probe_id', 'gene_symbol',
-                                                        'ensgene')])
-
-    # load sample metadata
-    mdat <- read.csv(mdat_infile)
-
-    # initialize result variable; first two columns of each expression dataset
-    # should be either <probe_id>, <gene_symbol> or <ensgene>, <gene_symbol>
-    ID_COL_INDICES <- 1:2
-    gene_weights <- expr[, ID_COL_INDICES]
-
-    # measure correlation or R^2 between each gene and each factor covariate
-    if (acc %in% names(factor_covariates)) {
-      # keep track of column names to use for output
-      output_cols <- c()
-
-      for (covariate in factor_covariates[[acc]]) {
-        message(sprintf("Processing %s / %s", acc, covariate))
-
-        # get covariate column
-        response <- mdat[, covariate]
-
-        # column name to use in output
-        output_colname <- make.names(sprintf("%s_%d_%s", acc, dataset_num, covariate))
-        output_cols <- c(output_cols, output_colname)
-
-        # for factor columns, compute R^2 for a logit predicting the factor level
-        if (is.character(response) || length(unique(response)) < 10) {
-          response <- factor(response)
-
-          # multinomial logistic regression
-          null <- glm(response ~ 1, family="binomial")
-
-          clusterExport(cl, c('response', 'null'))
-
-          weight_vector <- parApply(cl, expr_mat, 1, function(x) {
-            mod <- glm(response ~ x, family = "binomial")
-
-            # compute pseudo-R^2
-            as.numeric(1 - logLik(mod) / logLik(null))
-          })
-        }
-        gene_weights <- cbind(gene_weights, weight_vector)
-      }
-
-      # fix column and row names and save to disk
-      colnames(gene_weights)[(length(ID_COL_INDICES) + 1):ncol(gene_weights)] <- output_cols
-    }
-
-    # next, for those datasets with survival-related covariates, build cox regression
-    # models
-    if (acc %in% names(survival_covariates)) {
-      clusterExport(cl, c('mdat'))
-      tmp_ <- clusterCall(cl, function() library(survival))
-
-      for (survival_covariate_name in names(survival_covariates[[acc]])) {
-        message(sprintf("Processing %s / %s", acc, survival_covariate_name))
-
-        surv_cov <- survival_covariates[[acc]][[survival_covariate_name]]
-
-        clusterExport(cl, c('surv_cov'))
-
-        # survival duration + censor/event
-        #if (length(surv_cov) == 2) {
-
-        fits <- parApply(cl, expr_mat, 1, function(x) {
-          surv <- survival::Surv(time = mdat[, surv_cov[1]], event = mdat[, surv_cov[2]])
-          summary(survival::coxph(surv ~ x))
-        })
-
-        #} else {
-        #  # survival duration only
-        #  fits <- parApply(cl, expr_mat, 1, function(x) {
-        #    surv <- survival::Surv(time = mdat[, surv_cov[1]])
-        #    summary(survival::coxph(surv ~ x))
-        #  })
-        #}
-
-        # cox regression Wald statistic
-        cox_stat <- as.numeric(unlist(lapply(fits, function(x) {
-          x$waldtest['test']
-        })))
-
-        # cox regression Wald P-value
-        cox_pval <- as.numeric(unlist(lapply(fits, function(x) {
-          x$waldtest['pvalue']
-        })))
-
-        # add to gene weights and fix column names
-        gene_weights <- cbind(gene_weights, cox_stat, cox_pval)
-
-        cnames <- paste(dataset_prefix, survival_covariate_name, c('cox_stat', 'cox_pval'), sep = '_')
-
-        colnames(gene_weights)[(ncol(gene_weights) - 1):ncol(gene_weights)] <- cnames
-      }
-    }
-
-    # compute gene- or probe-wise distribution statistics
-    gene_weights$variance <- apply(expr_mat, 1, var)
-    gene_weights$mad <- apply(expr_mat, 1, mad)
-    gene_weights$kurtosis <- apply(expr_mat, 1, kurtosis)
-
-    # dip test
-    dip <- apply(expr_mat, 1, dip.test)
-    gene_weights$dip_stat <- unlist(lapply(dip, function(x) { x$statistic }))
-    gene_weights$dip_pval <- unlist(lapply(dip, function(x) { x$p.val }))
-
-    # silverman test
-    NULL_NUM_MODES <- 1
-    silv <- parApply(cl, expr_mat, 1, silverman.test, NULL_NUM_MODES)
-    gene_weights$silv_pval <- unlist(lapply(silv, function(x) { x@p_value }))
-
-    # prepend dataset accession to column names
-    ind <- colnames(gene_weights) %in% c('variance', 'mad', 'kurtosis', 'dip_stat', 'dip_pval', 'silv_pval')
-
-    colnames(gene_weights)[ind] <- paste0(acc, '_', colnames(gene_weights)[ind], '_', dataset_num)
-
-    write_csv(gene_weights, outfile)
+  # if the gene weights have already been computed, load from file and continue
+  if (file.exists(outfile)) {
+    message(sprintf("Skipping %s; output already exists...", acc))
+    next
   }
+
+  # otherwise load gene expression data and sample metadata and compute weights
+  expr <- read_csv(expr_infile)
+
+  # data size
+  dataset_sizes <- rbind(dataset_sizes, c(acc, ncol(expr) - 2))
+
+  # create a version without the gene / probe identifiers
+  expr_mat <- as.matrix(expr[, !colnames(expr) %in% c('probe_id', 'gene_symbol',
+                                                      'ensgene')])
+
+  # load sample metadata
+  mdat <- read.csv(mdat_infile)
+
+  # initialize result variable; first two columns of each expression dataset
+  # should be either <probe_id>, <gene_symbol> or <ensgene>, <gene_symbol>
+  ID_COL_INDICES <- 1:2
+  gene_weights <- expr[, ID_COL_INDICES]
+
+  # measure correlation or R^2 between each gene and each factor covariate
+  if (acc %in% names(factor_covariates)) {
+    # keep track of column names to use for output
+    output_cols <- c()
+
+    for (covariate in factor_covariates[[acc]]) {
+      message(sprintf("Processing %s / %s", acc, covariate))
+
+      # get covariate column
+      response <- mdat[, covariate]
+
+      # column name to use in output
+      output_colname <- make.names(sprintf("%s_%s", acc, covariate))
+      output_cols <- c(output_cols, output_colname)
+
+      # for factor columns, compute R^2 for a logit predicting the factor level
+      if (is.character(response) || length(unique(response)) < 10) {
+        response <- factor(response)
+
+        # multinomial logistic regression
+        null <- glm(response ~ 1, family="binomial")
+
+        clusterExport(cl, c('response', 'null'))
+
+        weight_vector <- parApply(cl, expr_mat, 1, function(x) {
+          mod <- glm(response ~ x, family = "binomial")
+
+          # compute pseudo-R^2
+          as.numeric(1 - logLik(mod) / logLik(null))
+        })
+      }
+      gene_weights <- cbind(gene_weights, weight_vector)
+    }
+
+    # fix column and row names and save to disk
+    colnames(gene_weights)[(length(ID_COL_INDICES) + 1):ncol(gene_weights)] <- output_cols
+  }
+
+  # next, for those datasets with survival-related covariates, build cox regression
+  # models
+  if (acc %in% names(survival_covariates)) {
+    clusterExport(cl, c('mdat'))
+    tmp_ <- clusterCall(cl, function() library(survival))
+
+    for (survival_covariate_name in names(survival_covariates[[acc]])) {
+      message(sprintf("Processing %s / %s", acc, survival_covariate_name))
+
+      surv_cov <- survival_covariates[[acc]][[survival_covariate_name]]
+
+      clusterExport(cl, c('surv_cov'))
+
+      # survival duration + censor/event
+      #if (length(surv_cov) == 2) {
+
+      fits <- parApply(cl, expr_mat, 1, function(x) {
+        surv <- survival::Surv(time = mdat[, surv_cov[1]], event = mdat[, surv_cov[2]])
+        summary(survival::coxph(surv ~ x))
+      })
+
+      #} else {
+      #  # survival duration only
+      #  fits <- parApply(cl, expr_mat, 1, function(x) {
+      #    surv <- survival::Surv(time = mdat[, surv_cov[1]])
+      #    summary(survival::coxph(surv ~ x))
+      #  })
+      #}
+
+      # cox regression Wald statistic
+      cox_stat <- as.numeric(unlist(lapply(fits, function(x) {
+        x$waldtest['test']
+      })))
+
+      # cox regression Wald P-value
+      cox_pval <- as.numeric(unlist(lapply(fits, function(x) {
+        x$waldtest['pvalue']
+      })))
+
+      # add to gene weights and fix column names
+      gene_weights <- cbind(gene_weights, cox_stat, cox_pval)
+
+      cnames <- paste(acc, survival_covariate_name, c('cox_stat', 'cox_pval'), sep = '_')
+
+      colnames(gene_weights)[(ncol(gene_weights) - 1):ncol(gene_weights)] <- cnames
+    }
+  }
+
+  # compute gene- or probe-wise distribution statistics
+  gene_weights$variance <- apply(expr_mat, 1, var)
+  gene_weights$mad <- apply(expr_mat, 1, mad)
+  gene_weights$kurtosis <- apply(expr_mat, 1, kurtosis)
+
+  # dip test
+  dip <- apply(expr_mat, 1, dip.test)
+  gene_weights$dip_stat <- unlist(lapply(dip, function(x) { x$statistic }))
+  gene_weights$dip_pval <- unlist(lapply(dip, function(x) { x$p.val }))
+
+  # silverman test
+  NULL_NUM_MODES <- 1
+  silv <- parApply(cl, expr_mat, 1, silverman.test, NULL_NUM_MODES)
+  gene_weights$silv_pval <- unlist(lapply(silv, function(x) { x@p_value }))
+
+  # prepend dataset accession to column names
+  ind <- colnames(gene_weights) %in% c('variance', 'mad', 'kurtosis', 'dip_stat', 'dip_pval', 'silv_pval')
+
+  colnames(gene_weights)[ind] <- paste0(acc, '_', colnames(gene_weights)[ind])
+
+  write_csv(gene_weights, outfile)
+}
 }
 ```
 
@@ -307,7 +297,7 @@ for (acc in accessions) {
 
 ```{r process_mmrf_commpass_data}
 # mmrf gene weights output filepath
-outfile <- file.path('output', 'gene_weights_mmrf_ia13.csv')
+outfile <- file.path('output', 'gene_weights_MMRF.csv')
 ```
 
 ```{r load_mmrf_data, eval = !file.exists(outfile)}
@@ -339,7 +329,7 @@ colnames(mmrf_raw_counts) <- substr(colnames(mmrf_raw_counts), 1, 9)
 #message(sprintf("Excluding %d/%d patient RNA-Seq samples who dropped from study, or are missing metadata", sum(!mask), ncol(mmrf_raw_counts)))
 #mmrf_raw_counts <- mmrf_raw_counts[, mask]
 
-dataset_sizes <- rbind(dataset_sizes, c('mmrf_ia13', ncol(mmrf_raw_counts) - 1))
+dataset_sizes <- rbind(dataset_sizes, c('mmrf', ncol(mmrf_raw_counts) - 1))
 
 # drop "ERCC" rows
 mask <- !startsWith(mmrf_raw_counts$GENE_ID, 'ERCC')
@@ -399,7 +389,7 @@ wald_pvals <- as.numeric(unlist(lapply(fits, function(x) {
 })))
 
 gene_weights <- data.frame(ensgene = mmrf_cpm_counts$GENE_ID,
-                           mmrf_ia13_pfs_cox_stat = cox_stat, mmrf_ia13_pfs_cox_pval = wald_pvals)
+                           mmrf_pfs_cox_stat = cox_stat, mmrf_pfs_cox_pval = wald_pvals)
 
 # SAMSeq
 #res <- SAMseq(as.matrix(mmrf_raw_counts[, -1]), mmrf_mdat$pfscdy, mmrf_mdat$censpfs,
@@ -412,19 +402,19 @@ gene_weights <- data.frame(ensgene = mmrf_cpm_counts$GENE_ID,
 #random.seed = NULL, nresamp = 20, fdr.output = 0.20)
 
 # compute gene- or probe-wise distribution statistics
-gene_weights$mmrf_ia13_variance <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, var)
-gene_weights$mmrf_ia13_mad      <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, mad)
-gene_weights$mmrf_ia13_kurtosis <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, kurtosis)
+gene_weights$mmrf_variance <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, var)
+gene_weights$mmrf_mad      <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, mad)
+gene_weights$mmrf_kurtosis <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, kurtosis)
 
 dip <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, dip.test)
-gene_weights$mmrf_ia13_dip_stat <- unlist(lapply(dip, function(x) { x$statistic }))
-gene_weights$mmrf_ia13_dip_pval <- unlist(lapply(dip, function(x) { x$p.val }))
+gene_weights$mmrf_dip_stat <- unlist(lapply(dip, function(x) { x$statistic }))
+gene_weights$mmrf_dip_pval <- unlist(lapply(dip, function(x) { x$p.val }))
 
 # silverman test
 NULL_NUM_MODES <- 1
 silv <- parApply(cl, as.matrix(mmrf_cpm_counts[, -1]), 1, silverman.test, NULL_NUM_MODES)
 
-gene_weights$mmrf_ia13_silv_pval <- unlist(lapply(silv, function(x) { x@p_value }))
+gene_weights$mmrf_silv_pval <- unlist(lapply(silv, function(x) { x@p_value }))
 
 # save results
 write_csv(gene_weights, outfile)
@@ -476,7 +466,7 @@ for (dataset in Sys.glob('output/gene_weights_*')) {
   }
 
   # for MMRF data, add gene symbol column
-  if (dataset == 'output/gene_weights_mmrf_ia13.csv') {
+  if (dataset == 'output/gene_weights_MMRF.csv') {
     gene_weights$gene_symbol <- grch37$symbol[match(gene_weights$ensgene, grch37$ensgene)]
   }
 
@@ -569,7 +559,7 @@ heatmaply(var_cor_mat)
 
 # number of genes for which both GSE6477 and GSE9782
 #var_high_cor <- var_dat %>%
-#  select(GSE6477_variance, GSE9782_variance_1, GSE9782_variance_2)
+#  select(GSE6477_variance, GSE9782_variance)
 
 #table(apply(var_high_cor, 1, function(x) { sum(is.na(x)) == 0 }))
 # 
@@ -620,9 +610,9 @@ gene_num_na <- apply(covariate_dat, 1, function(x) { sum(is.na(x)) })
 
 covariate_dat <- covariate_dat[gene_num_na <= GENE_MAX_MISSING_COVARIATES, ]
 
-covariate_cor_mat <- cor(covariate_dat, use = 'pairwise.complete.obs')
+covariate_cor_mat <- round(cor(covariate_dat, use = 'pairwise.complete.obs'), 2)
 
-heatmaply(covariate_cor_mat, draw_cellnote = TRUE, cellnote_size = 10)
+heatmaply(covariate_cor_mat, draw_cellnote = TRUE, cellnote_size = 8)
 ```
 
 
@@ -641,8 +631,8 @@ plot_density(dat, ggtheme = theme_bw_high_res(), parallel = TRUE)
 #### Dataset / Gene Weight Measure Similarity
 
 ```{r, fig.width = 6, fig.height = 4.8}
-theme_conf <- theme(axis.text.x = element_text(angle = 90, size = 8, hjust = 1),
-                    axis.text.y = element_text(angle = 90, size = 8, hjust = 1))
+theme_conf <- theme(axis.text.x = element_text(size = 3),
+                    axis.text.y = element_text(angle = 90, size = 2, hjust = 1))
 plot_correlation(dat, type = 'continuous', ggtheme = theme_bw_high_res(),
                  cor_args = list(use = 'pairwise.complete.obs'), theme_config =
                    theme_conf)

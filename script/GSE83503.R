@@ -50,7 +50,7 @@ exprs(eset) <- sweep(exprs(eset), 2, colSums(exprs(eset)), '/') * 1E6
 # "treatment_protocol_ch1" is another alias for death;
 # "grow_protocol_ch1" is an alias for relapse;
 sample_metadata <- pData(eset) %>%
-  select(sample_id=geo_accession, platform_id, death=`death:ch1`, relapse=`relapse:ch1`)
+  select(geo_accession, platform_id, death=`death:ch1`, relapse=`relapse:ch1`)
 
 # add cell type and disease (same for all samples)
 sample_metadata$disease = 'Multiple Myeloma'
@@ -72,9 +72,9 @@ expr_dat <- exprs(eset) %>%
   add_column(gene_symbol = gene_symbols, .after = 1)
 
 # store cleaned expression data and metadata
-write_csv(expr_dat, file.path(clean_data_dir, sprintf('%s_1_expr.csv', accession)))
+write_csv(expr_dat, file.path(clean_data_dir, sprintf('%s_expr.csv', accession)))
 write_csv(sample_metadata, 
-          file.path(clean_data_dir, sprintf('%s_1_sample_metadata.csv', accession)))
+          file.path(clean_data_dir, sprintf('%s_sample_metadata.csv', accession)))
 
 sessionInfo()
 

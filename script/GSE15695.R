@@ -56,7 +56,7 @@ eset <- eset[!startsWith(rownames(eset), 'AFFX-'), ]
 
 # get relevant sample metadata
 sample_metadata <- pData(eset) %>%
-  select(sample_id=geo_accession, platform_id)
+  select(geo_accession, platform_id)
 
 # add cell type and disease (same for all samples)
 sample_metadata$disease = 'Multiple Myeloma'
@@ -69,9 +69,9 @@ expr_dat <- exprs(eset) %>%
   add_column(gene_symbol = fData(eset)$`Gene Symbol`, .after = 1)
 
 # store cleaned expression data and metadata
-write_csv(expr_dat, file.path(clean_data_dir, sprintf('%s_1_expr.csv', accession)))
+write_csv(expr_dat, file.path(clean_data_dir, sprintf('%s_expr.csv', accession)))
 write_csv(sample_metadata, 
-          file.path(clean_data_dir, sprintf('%s_1_sample_metadata.csv', accession)))
+          file.path(clean_data_dir, sprintf('%s_sample_metadata.csv', accession)))
 
 sessionInfo()
 
