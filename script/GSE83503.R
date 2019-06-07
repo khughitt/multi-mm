@@ -23,6 +23,29 @@ for (dir_ in c(raw_data_dir, clean_data_dir)) {
 # result is a list with a single entry containing an ExpressionSet instance
 eset <- getGEO(accession, destdir = raw_data_dir)[[1]]
 
+# report data processing used
+print(as.character(pData(eset)$data_processing[1]))
+
+# exclude control spots (4130 / 22011 samples)
+mask <- fData(eset)$SPOT_ID != 'control'
+eset <- eset[mask, ]
+
+# exclude any probes with zero variance (uninformative)
+eset <- eset[apply(exprs(eset), 1, var) > 0, ]
+
+# GSE83503 has already been size-factor scaled, so no need to adjust
+#range(colSums(exprs(eset)))
+# [1]  97004.52 106777.29
+
+# in order to normalize downstream comparisons across datasets, however, we will
+# aply a size-factor normalization so that the sample sizes all sum to exactly the
+# same amount..
+exprs(eset) <- sweep(exprs(eset), 2, colSums(exprs(eset)), '/') * 1E6
+
+# GSE83503 has no zero-variance probes..
+# any(apply(exprs(eset), 1, var) == 0)
+# [1] FALSE
+
 # get relevant sample metadata
 # "treatment_protocol_ch1" is another alias for death;
 # "grow_protocol_ch1" is an alias for relapse;
@@ -32,10 +55,6 @@ sample_metadata <- pData(eset) %>%
 # add cell type and disease (same for all samples)
 sample_metadata$disease = 'Multiple Myeloma'
 sample_metadata$cell_type = 'BM-CD138+'
-
-# exclude control spots (4130 / 22011 samples)
-mask <- fData(eset)$SPOT_ID != 'control'
-eset <- eset[mask, ]
 
 # get gene symbols associated with each probe; gene symbols are stored at ever
 # [(N-1) + 2]th position (i.e. 2, 7, 12, 17..)
@@ -53,9 +72,9 @@ expr_dat <- exprs(eset) %>%
   add_column(gene_symbol = gene_symbols, .after = 1)
 
 # store cleaned expression data and metadata
-write_csv(expr_dat, file.path(clean_data_dir, sprintf('%s_expr.csv', accession)))
+write_csv(expr_dat, file.path(clean_data_dir, sprintf('%s_1_expr.csv', accession)))
 write_csv(sample_metadata, 
-          file.path(clean_data_dir, sprintf('%s_sample_metadata.csv', accession)))
+          file.path(clean_data_dir, sprintf('%s_1_sample_metadata.csv', accession)))
 
 sessionInfo()
 

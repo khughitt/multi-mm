@@ -1,0 +1,711 @@
+---
+title: Multiple Myeloma Dataset Comparison
+author: V. Keith Hughitt
+date: "`r format(Sys.time(), '%d %B, %Y') `"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+---
+
+# TODO
+
+1. Generate "thumbnail" overview images of each dataset.
+
+# IDEAS
+
+1. For final gene weights, use mostly survival, etc. R^2's since these are likely to be
+   the genes that are particularly important for MM.
+2. For variance, etc. could try downloading a large number of "normal" (non-MM /
+   non-cancer) samples and measure the same statistics. Then look for genes which have
+   the highest variance in the MM samples, relative to healthy ones?
+
+# Overview
+
+...
+
+**Related work:**
+
+1. [Botta et al. (2016)](https://www.nature.com/articles/bcj2016118) - Combines data
+   from 5 different MM experiments (table S1) to determine a survival-specific gene signature.
+   - focussed on inflammation-related gene subset.
+
+```{r, message = FALSE}
+library(annotables)
+library(DataExplorer)
+library(diptest)
+library(e1071)
+library(heatmaply)
+library(inspectdf)
+library(knitr)
+library(parallel)
+library(samr)
+library(silvermantest)
+library(survival)
+library(tidyverse)
+```
+
+```{r}
+options(warn = 2) # DEV
+options(digits = 3)
+options(stringsAsFactors = FALSE)
+set.seed(1)
+```
+
+```{r rmarkdown_settings, include = FALSE}
+# default plot options
+opts_chunk$set(
+  fig.width = 4.8,
+  fig.height = 3.6,
+  fig.retina = 1,
+  dpi = 300,
+  error = FALSE
+)
+
+opts_knit$set(verbose = TRUE)
+
+# support for complex table output
+options(knitr.duplicate.label = 'allow')
+
+# ggplot theme
+theme_bw_high_res <- function (base_size = 11, base_line_size = 0.5) { 
+	theme_bw(base_size = base_size) %+replace% 
+    theme(plot.title = element_text(size = 9, vjust = 0), 
+          legend.text = element_text(size = 8))
+}
+```
+
+```{r settings}
+GENE_MAX_MISSING_COVARIATES <- 2
+```
+
+**TODO**
+
+- Annotate datasets?
+  - Are there any obvious factors that could explain why some datasets are more similar
+    to others?
+  - disease stage / age of patients?
+  - cell line vs. patient
+  - size
+  - response measure type
+- MMRF
+  - MAD outlier due to RNA-Seq / presence of many low-count genes?
+- Visualize some examples at each step? (e.g. compare count distributions for a single
+  gene with high dip test?)
+
+
+```{r initialize_cluster}
+# create paralellization handler
+num_threads <- max(1, min(detectCores() - 4))
+cl <- makeCluster(num_threads, outfile='')
+```
+
+```{r}
+set.seed(1)
+```
+
+## Process datasets
+
+### GEO
+
+```{r parse_geo_datasets, message = FALSE}
+# iterate over datasets and measure gene / phenotype correlation
+base_dir <- '/data/public/human/geo'
+
+accessions <- list.files(base_dir)
+
+#
+# datasets with no relevant covariate data available (used just for variance, etc.
+# gene-level stats)
+#
+# GSE31161
+# GSE7039
+#
+
+# list of factor covariates to process for each accession;
+# logistic regression models will be built for each such variable
+factor_covariates <- list(
+  "GSE116324" = c('bortezomib_response', 'iss_stage'),
+  "GSE19784"  = c('iss_stage', 'patient_subgroup'),
+  "GSE2658"   = c('deceased', 'patient_subgroup'),
+  "GSE6477"   = c('mm_stage'),
+  "GSE68871"  = c('treatment_response'),
+  "GSE83503"  = c('death', 'relapse'),
+  "GSE9782"   = c('pgx_response', 'pgx_responder'),
+  "GSE24080"  = c('efs_event', 'os_event')
+)
+
+# survival-related covariates;
+# cox regression models will be constructed for each variable or pair of variables
+survival_covariates <- list(
+  "GSE19784" = list('os'  = c('os_months', 'os_event'),
+                    'pfs' = c('pfs_months', 'pfs_event')),
+  "GSE9782"  = list('os'  = c('os_days', 'os_censor'),
+                    'pfs' = c('pfs_days', 'pfs_censor'))
+)
+
+# keep track of the number of samples in each dataset
+# can be used to weight contributions of each source
+dataset_sizes <- NULL
+
+for (acc in accessions) {
+  # load gene expression data
+  data_dir <- file.path(base_dir, acc, 'processed')
+
+  # determine how many datasets are associated with the accession; usually just one
+  num_datasets <- length(Sys.glob(file.path(data_dir, '*_expr*.csv')))
+
+  for (dataset_num in 1:num_datasets) {
+    message(sprintf("Processing dataset %s (%d / %d)", acc, dataset_num, num_datasets))
+
+    # determine variable name prefix to use
+    dataset_prefix <- sprintf("%s_%s", acc, dataset_num)
+
+    # filenames
+    expr_infile <- file.path(data_dir, sprintf("%s_expr.csv", dataset_prefix))
+    mdat_infile <- file.path(data_dir, sprintf("%s_sample_metadata.csv",
+                                               dataset_prefix))
+
+    outfile <- file.path('output', sprintf('gene_weights_%s_%d.csv', acc, dataset_num))
+
+    # if the gene weights have already been computed, load from file and continue
+    if (file.exists(outfile)) {
+			message(sprintf("Skipping %s; output already exists...", acc))
+      next
+    }
+
+    # otherwise load gene expression data and sample metadata and compute weights
+    expr <- read_csv(expr_infile)
+
+    # data size
+    dataset_sizes <- rbind(dataset_sizes, c(dataset_prefix, ncol(expr) - 2))
+
+    # create a version without the gene / probe identifiers
+    expr_mat <- as.matrix(expr[, !colnames(expr) %in% c('probe_id', 'gene_symbol',
+                                                        'ensgene')])
+
+    # load sample metadata
+    mdat <- read.csv(mdat_infile)
+
+    # initialize result variable; first two columns of each expression dataset
+    # should be either <probe_id>, <gene_symbol> or <ensgene>, <gene_symbol>
+    ID_COL_INDICES <- 1:2
+    gene_weights <- expr[, ID_COL_INDICES]
+
+    # measure correlation or R^2 between each gene and each factor covariate
+    if (acc %in% names(factor_covariates)) {
+      # keep track of column names to use for output
+      output_cols <- c()
+
+      for (covariate in factor_covariates[[acc]]) {
+        message(sprintf("Processing %s / %s", acc, covariate))
+
+        # get covariate column
+        response <- mdat[, covariate]
+
+        # column name to use in output
+        output_colname <- make.names(sprintf("%s_%d_%s", acc, dataset_num, covariate))
+        output_cols <- c(output_cols, output_colname)
+
+        # for factor columns, compute R^2 for a logit predicting the factor level
+        if (is.character(response) || length(unique(response)) < 10) {
+          response <- factor(response)
+
+          # multinomial logistic regression
+          null <- glm(response ~ 1, family="binomial")
+
+          clusterExport(cl, c('response', 'null'))
+
+          weight_vector <- parApply(cl, expr_mat, 1, function(x) {
+            mod <- glm(response ~ x, family = "binomial")
+
+            # compute pseudo-R^2
+            as.numeric(1 - logLik(mod) / logLik(null))
+          })
+        }
+        gene_weights <- cbind(gene_weights, weight_vector)
+      }
+
+      # fix column and row names and save to disk
+      colnames(gene_weights)[(length(ID_COL_INDICES) + 1):ncol(gene_weights)] <- output_cols
+    }
+
+    # next, for those datasets with survival-related covariates, build cox regression
+    # models
+    if (acc %in% names(survival_covariates)) {
+      clusterExport(cl, c('mdat'))
+      tmp_ <- clusterCall(cl, function() library(survival))
+
+      for (survival_covariate_name in names(survival_covariates[[acc]])) {
+        message(sprintf("Processing %s / %s", acc, survival_covariate_name))
+
+        surv_cov <- survival_covariates[[acc]][[survival_covariate_name]]
+
+        clusterExport(cl, c('surv_cov'))
+
+        # survival duration + censor/event
+        #if (length(surv_cov) == 2) {
+
+        fits <- parApply(cl, expr_mat, 1, function(x) {
+          surv <- survival::Surv(time = mdat[, surv_cov[1]], event = mdat[, surv_cov[2]])
+          summary(survival::coxph(surv ~ x))
+        })
+
+        #} else {
+        #  # survival duration only
+        #  fits <- parApply(cl, expr_mat, 1, function(x) {
+        #    surv <- survival::Surv(time = mdat[, surv_cov[1]])
+        #    summary(survival::coxph(surv ~ x))
+        #  })
+        #}
+
+        # cox regression Wald statistic
+        cox_stat <- as.numeric(unlist(lapply(fits, function(x) {
+          x$waldtest['test']
+        })))
+
+        # cox regression Wald P-value
+        cox_pval <- as.numeric(unlist(lapply(fits, function(x) {
+          x$waldtest['pvalue']
+        })))
+
+        # add to gene weights and fix column names
+        gene_weights <- cbind(gene_weights, cox_stat, cox_pval)
+
+        cnames <- paste(dataset_prefix, survival_covariate_name, c('cox_stat', 'cox_pval'), sep = '_')
+
+        colnames(gene_weights)[(ncol(gene_weights) - 1):ncol(gene_weights)] <- cnames
+      }
+    }
+
+    # compute gene- or probe-wise distribution statistics
+    gene_weights$variance <- apply(expr_mat, 1, var)
+    gene_weights$mad <- apply(expr_mat, 1, mad)
+    gene_weights$kurtosis <- apply(expr_mat, 1, kurtosis)
+
+    # dip test
+    dip <- apply(expr_mat, 1, dip.test)
+    gene_weights$dip_stat <- unlist(lapply(dip, function(x) { x$statistic }))
+    gene_weights$dip_pval <- unlist(lapply(dip, function(x) { x$p.val }))
+
+    # silverman test
+    NULL_NUM_MODES <- 1
+    silv <- parApply(cl, expr_mat, 1, silverman.test, NULL_NUM_MODES)
+    gene_weights$silv_pval <- unlist(lapply(silv, function(x) { x@p_value }))
+
+    # prepend dataset accession to column names
+    ind <- colnames(gene_weights) %in% c('variance', 'mad', 'kurtosis', 'dip_stat', 'dip_pval', 'silv_pval')
+
+    colnames(gene_weights)[ind] <- paste0(acc, '_', colnames(gene_weights)[ind], '_', dataset_num)
+
+    write_csv(gene_weights, outfile)
+  }
+}
+```
+
+### MMRF CoMMpass
+
+```{r process_mmrf_commpass_data}
+# mmrf gene weights output filepath
+outfile <- file.path('output', 'gene_weights_mmrf_ia13.csv')
+```
+
+```{r load_mmrf_data, eval = !file.exists(outfile)}
+# load patient gene expression data
+base_dir <- '/data/public/human/mmrf_commpass/IA13'
+
+mmrf_raw_counts <- read_tsv(file.path(base_dir, 'rnaseq/MMRF_CoMMpass_IA13a_E74GTF_HtSeq_Gene_Counts.txt.gz'))
+
+# drop non-tumor samples;
+mask <- substr(colnames(mmrf_raw_counts), 13, 14) == 'BM'
+
+# first entry is mask corresponds to the patient id column which we always keep
+mask[1] <- TRUE
+mmrf_raw_counts <- mmrf_raw_counts[, mask]
+
+# remove patients who dropped out?..
+
+# for now, limit ourselves to baseline samples so that we have a single sample collected at the
+# same relative stage for each patient
+mask <- substr(colnames(mmrf_raw_counts), 11, 14) == '1_BM'
+mask[1] <- TRUE
+
+mmrf_raw_counts <- mmrf_raw_counts[, mask]
+colnames(mmrf_raw_counts) <- substr(colnames(mmrf_raw_counts), 1, 9)
+
+# drop rna-seq samples with no corresponding sample metadata (lose about 10%
+# of patients here who dropped out of the study)
+#mask <- substring(colnames(mmrf_raw_counts), 1, 9) %in% mmrf_mdat$public_id
+#message(sprintf("Excluding %d/%d patient RNA-Seq samples who dropped from study, or are missing metadata", sum(!mask), ncol(mmrf_raw_counts)))
+#mmrf_raw_counts <- mmrf_raw_counts[, mask]
+
+dataset_sizes <- rbind(dataset_sizes, c('mmrf_ia13', ncol(mmrf_raw_counts) - 1))
+
+# drop "ERCC" rows
+mask <- !startsWith(mmrf_raw_counts$GENE_ID, 'ERCC')
+mmrf_raw_counts <- mmrf_raw_counts[mask, ]
+
+# drop genes with zero variance
+mask <- apply(as.matrix(mmrf_raw_counts[, -1]), 1, var) > 0
+mmrf_raw_counts <- mmrf_raw_counts[mask, ]
+
+# create a cpm-normalized version of the raw counts
+mmrf_cpm_counts <- mmrf_raw_counts
+mmrf_col_sums <- colSums(mmrf_cpm_counts[, 2:ncol(mmrf_cpm_counts)])
+mmrf_cpm_counts[, 2:ncol(mmrf_cpm_counts)] <- sweep(mmrf_cpm_counts[, 2:ncol(mmrf_cpm_counts)],
+                                                    2, mmrf_col_sums, '/') * 1E6
+```
+
+```{r load_mmrf_patient_metadata, eval = !file.exists(outfile)}
+# load patient survival metadata
+# regular and censored overall & progression-free survival
+mmrf_mdat <- read_csv(file.path(base_dir, 'clinical_data_tables/MMRF_CoMMpass_IA13_STAND_ALONE_SURVIVAL.csv'))
+
+mmrf_mdat <- mmrf_mdat %>%
+  select(public_id, pfsdy, pfscdy, oscdy, censos, censpfs)
+
+# limit metadata to those patients for which gene express data is present and match
+# orders
+mmrf_mdat <- mmrf_mdat[match(colnames(mmrf_raw_counts)[-1], mmrf_mdat$public_id), ]
+
+#all(mmrf_mdat$public_id == colnames(mmrf_raw_counts)[-1])
+# [1] TRUE
+```
+
+```{r mmrf_gene_wise_stats, eval = !file.exists(outfile)}
+gene_weights <- NULL
+
+# Kaplan-Meier survival regression
+#fit <- survival::survfit(survival::Surv(pfscdy, censpfs) ~ 1, data = mmrf_mdat)
+#fit <- survival::survfit(survival::Surv(oscdy, censos) ~ 1, data = mmrf_mdat)
+#fit <- survival::survfit(survival::Surv(pfscdy, censpfs) ~ 1, data = mmrf_mdat)
+
+# Cox regression (survival ~ gene)
+clusterExport(cl, c('mmrf_mdat'))
+tmp_ <- clusterCall(cl, function() library(survival))
+
+fits <- parApply(cl, as.matrix(mmrf_cpm_counts[, -1]), 1, function(x) {
+  summary(survival::coxph(survival::Surv(mmrf_mdat$pfscdy, mmrf_mdat$censpfs) ~ x))
+})
+
+# Cox regression Wald statistic
+cox_stat <- as.numeric(unlist(lapply(fits, function(x) {
+  x$waldtest['test']
+})))
+
+# Cox regression Wald P-value
+wald_pvals <- as.numeric(unlist(lapply(fits, function(x) {
+  x$waldtest['pvalue']
+})))
+
+gene_weights <- data.frame(ensgene = mmrf_cpm_counts$GENE_ID,
+                           mmrf_ia13_pfs_cox_stat = cox_stat, mmrf_ia13_pfs_cox_pval = wald_pvals)
+
+# SAMSeq
+#res <- SAMseq(as.matrix(mmrf_raw_counts[, -1]), mmrf_mdat$pfscdy, mmrf_mdat$censpfs,
+#              resp.type = 'Survival', geneid = mmrf_raw_counts$GENE_ID, random.seed = 1)
+
+#SAMseq(x, y, censoring.status = NULL,
+#resp.type = c("Quantitative", "Two class unpaired",
+#"Survival", "Multiclass", "Two class paired"),
+#geneid = NULL, genenames = NULL, nperms = 100,
+#random.seed = NULL, nresamp = 20, fdr.output = 0.20)
+
+# compute gene- or probe-wise distribution statistics
+gene_weights$mmrf_ia13_variance <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, var)
+gene_weights$mmrf_ia13_mad      <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, mad)
+gene_weights$mmrf_ia13_kurtosis <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, kurtosis)
+
+dip <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, dip.test)
+gene_weights$mmrf_ia13_dip_stat <- unlist(lapply(dip, function(x) { x$statistic }))
+gene_weights$mmrf_ia13_dip_pval <- unlist(lapply(dip, function(x) { x$p.val }))
+
+# silverman test
+NULL_NUM_MODES <- 1
+silv <- parApply(cl, as.matrix(mmrf_cpm_counts[, -1]), 1, silverman.test, NULL_NUM_MODES)
+
+gene_weights$mmrf_ia13_silv_pval <- unlist(lapply(silv, function(x) { x@p_value }))
+
+# save results
+write_csv(gene_weights, outfile)
+
+# save dataset size information
+colnames(dataset_sizes) <- c('dataset', 'num_samples')
+dataset_sizes <- as.data.frame(dataset_sizes)
+dataset_sizes$num_samples <- as.numeric(dataset_sizes$num_samples)
+
+write_csv(dataset_sizes, 'output/datasets.csv')
+```
+
+## Results
+
+```{r results, message = FALSE}
+# create variables to store result matrices
+dat <- NULL
+
+# load GEO, etc. datasets
+for (dataset in Sys.glob('output/gene_weights_*')) {
+  # load gene expression data
+  gene_weights <- read_csv(dataset)
+
+  # for GEO microarray datasets, expand probes mapping to more than a single gene
+  # and take the
+  if ('probe_id' %in% colnames(gene_weights)) {
+    gene_weights <- gene_weights %>%
+      separate_rows(gene_symbol, sep = "\\s+///?\\s+") %>%
+      select(-probe_id)
+
+    # drop probes that couldn't be mapped
+    gene_weights <- gene_weights[!is.na(gene_weights$gene_symbol), ]
+
+    # find minimum pvalues / max statistics for each gene
+    gene_stats <- gene_weights %>%
+      select(-matches('pval_?\\d*$')) %>%
+      group_by(gene_symbol) %>%
+      summarize_all(max) %>%
+      ungroup
+
+    gene_pvals <- gene_weights %>%
+      select(gene_symbol, matches('pval_?\\d*$')) %>%
+      group_by(gene_symbol) %>%
+      summarize_all(min) %>%
+      ungroup %>%
+      select(-gene_symbol)
+
+    gene_weights <- cbind(gene_stats, gene_pvals)
+  }
+
+  # for MMRF data, add gene symbol column
+  if (dataset == 'output/gene_weights_mmrf_ia13.csv') {
+    gene_weights$gene_symbol <- grch37$symbol[match(gene_weights$ensgene, grch37$ensgene)]
+  }
+
+  # add to combined dataset
+  if (is.null(dat)) {
+    dat <- gene_weights
+  } else {
+    if ('ensgene' %in% colnames(dat) && 'ensgene' %in% colnames(gene_weights)) {
+      gene_weights <- gene_weights %>%
+        select(-ensgene)
+    }
+    dat <- dat %>%
+      full_join(gene_weights, by = 'gene_symbol')
+  }
+}
+
+#table(duplicated(dat$gene_symbol))
+# 
+# FALSE 
+# 62114 
+
+# drop any entries with no associated gene symbols
+dat <- dat %>%
+  filter(!is.na(gene_symbol))
+
+# aggregate any remaining duplicated gene entries, as before
+gene_stats <- dat %>%
+  select(-matches('pval_?\\d*$')) %>%
+  group_by(gene_symbol) %>%
+  summarize_all(max) %>%
+  ungroup
+
+gene_pvals <- dat %>%
+  select(gene_symbol, matches('pval_?\\d*$')) %>%
+  group_by(gene_symbol) %>%
+  summarize_all(min) %>%
+  ungroup %>%
+  select(-gene_symbol)
+
+dat <- cbind(gene_stats, gene_pvals)
+
+# reorder columns
+id_cols <- c('ensgene', 'gene_symbol')
+dat <- dat[, c(id_cols, colnames(dat)[!colnames(dat) %in% id_cols])]
+
+# save combined gene weight data
+write_csv(dat, 'output/combined_gene_weights.csv')
+```
+
+
+```{r results = 'asis', include = FALSE, eval = FALSE}
+### Datasets included
+kable(dataset_sizes %>% arrange(desc(num_samples)))
+
+cat(sprintf("\n- Total: %d\n", sum(dataset_sizes$num_samples)))
+```
+
+### Gene Weights Overview
+
+```{r}
+inspect_types(dat)
+```
+
+#### Dataset similarity
+
+```{r}
+#dat_long <- dat %>%
+#  select(-ensgene) %>%
+#  gather(key = gene_stat, value, -gene_symbol) %>%
+#  mutate(dataset = str_extract(gene_stat, '[[:alnum:]]+'))
+
+#table(dat_long$dataset)
+#
+#  GSE6477 GSE68871 GSE83503  GSE9782     mmrf
+#   534789   415947   475368   950736   475368
+
+#x <- dat_long %>%
+#  spread(key = dataset, value = value)
+```
+
+##### By gene variance
+
+```{r}
+var_dat <- dat %>%
+  select(matches('_variance_?\\d*$'))
+
+var_cor_mat <- cor(var_dat, use = 'pairwise.complete.obs')
+
+heatmaply(var_cor_mat)
+
+# number of genes for which both GSE6477 and GSE9782
+#var_high_cor <- var_dat %>%
+#  select(GSE6477_variance, GSE9782_variance_1, GSE9782_variance_2)
+
+#table(apply(var_high_cor, 1, function(x) { sum(is.na(x)) == 0 }))
+# 
+# FALSE  TRUE 
+# 57587  4527 
+```
+
+##### By gene mad
+
+```{r}
+mad_dat <- dat %>%
+  select(matches('_mad_?\\d*$'))
+
+mad_cor_mat <- cor(mad_dat, use = 'pairwise.complete.obs')
+
+heatmaply(mad_cor_mat)
+```
+
+##### By gene dip statistic
+
+```{r}
+dip_dat <- dat %>%
+  select(matches('_dip_stat_?\\d*$'))
+
+dip_cor_mat <- cor(dip_dat, use = 'pairwise.complete.obs')
+
+heatmaply(dip_cor_mat)
+```
+
+##### By covariate weights
+
+```{r}
+covariate_dat <- dat %>%
+  select(-gene_symbol, -ensgene, -matches('_variance_?\\d*$'),
+         -matches('mad_?\\d*$'), -matches('kurtosis_?\\d*$'),
+         -matches('dip_stat_?\\d*$'), -matches('dip_pval_?\\d*$'),
+         -matches('silv_stat_?\\d*$'), -matches('silv_pval_?\\d*$'))
+
+rownames(covariate_dat) <- dat$gene_symbol
+
+# number of missing entries for each gene
+gene_num_na <- apply(covariate_dat, 1, function(x) { sum(is.na(x)) })
+
+#table(gene_num_na)
+# gene_num_na
+#     0     2     3     4     5     6     7     8     9    11    16    18    20    22 
+#  3914  7320  3197   808  1977   349   772   908  1654  1290  1645 20258 15380  2641 
+
+covariate_dat <- covariate_dat[gene_num_na <= GENE_MAX_MISSING_COVARIATES, ]
+
+covariate_cor_mat <- cor(covariate_dat, use = 'pairwise.complete.obs')
+
+heatmaply(covariate_cor_mat, draw_cellnote = TRUE, cellnote_size = 10)
+```
+
+
+#### Missing data
+
+```{r, fig.height = 12}
+plot_missing(dat, ggtheme = theme_bw_high_res())
+```
+
+#### Data distributions
+
+```{r fig.width = 6, fig.height = 6}
+plot_density(dat, ggtheme = theme_bw_high_res(), parallel = TRUE)
+```
+
+#### Dataset / Gene Weight Measure Similarity
+
+```{r, fig.width = 6, fig.height = 4.8}
+theme_conf <- theme(axis.text.x = element_text(angle = 90, size = 8, hjust = 1),
+                    axis.text.y = element_text(angle = 90, size = 8, hjust = 1))
+plot_correlation(dat, type = 'continuous', ggtheme = theme_bw_high_res(),
+                 cor_args = list(use = 'pairwise.complete.obs'), theme_config =
+                   theme_conf)
+```
+
+### Most informative genes
+
+#### Using covariate gene weights only
+
+```{r, fig.width = 6, fig.height = 6}
+# convert p-values to -log10(pvalue) scores so that directionality is the same for
+# all variables
+covariate_dat_log10pvals <- covariate_dat %>%
+  mutate_at(vars(matches("_pval_?\\d*$")), function (x) { -log10(x) }) %>%
+  mutate_each(list(scale))
+
+rownames(covariate_dat_log10pvals) <- rownames(covariate_dat)
+
+#
+# standardize? or max-scale?..
+#
+# standardizing will result in each variable contributing more equally to the final
+# weights
+#
+
+# shift to right so that lowest value for each column is zero
+for (x in colnames(covariate_dat_log10pvals)) {
+  covariate_dat_log10pvals[, x] <- covariate_dat_log10pvals[, x] - min(covariate_dat_log10pvals[, x], na.rm = TRUE)
+}
+
+plot_density(covariate_dat_log10pvals, ggtheme = theme_bw_high_res(), parallel = TRUE)
+
+# next compute average weights for each gene;
+# note that some genes are only measured in one or a few of the datasets, so confidence
+# of the gene weights should be considered
+
+# how much each column contributes to the score..
+#range(colMeans(covariate_dat_log10pvals, na.rm = TRUE))
+# [1] 0.603 1.622
+
+# get dataset names from column names;
+# TODO: track explicitly..
+#dset_names <- apply(str_split(colnames(covariate_dat_log10pvals), '_', 
+#                              simplify = TRUE)[, 1:2], 1, paste, collapse='_')
+# covariate_dat_log10pvals %*% diag(wts)
+ 
+xx <- rowMeans(covariate_dat_log10pvals, na.rm = TRUE)
+yy <- apply(covariate_dat_log10pvals, 1, median, na.rm = TRUE)
+
+xxx <- head(sort(xx, decreasing = TRUE), 15)
+yyy <- head(sort(yy, decreasing = TRUE), 15)
+
+covariate_dat_log10pvals[names(xxx), ]
+
+# top 20 genes
+kable(head(sort(rowMeans(covariate_dat_log10pvals, na.rm = TRUE), decreasing = TRUE), 20))
+```
+
+```{r}
+stopCluster(cl)
+```
+
+```{r}
+sessionInfo()
+```
+
