@@ -1,0 +1,124 @@
+### MMRF CoMMpass
+
+```{r process_mmrf_commpass_data}
+# mmrf gene weights output filepath
+outfile <- file.path(output_dir, 'gene_weights_MMRF.csv')
+```
+
+```{r load_mmrf_data, eval = !file.exists(outfile)}
+# load patient gene expression data
+mmrf_raw_counts <- read_tsv(file.path(mmrf_dir, 'rnaseq/MMRF_CoMMpass_IA13a_E74GTF_HtSeq_Gene_Counts.txt.gz'))
+
+# drop non-tumor samples;
+mask <- substr(colnames(mmrf_raw_counts), 13, 14) == 'BM'
+
+# first entry is mask corresponds to the patient id column which we always keep
+mask[1] <- TRUE
+mmrf_raw_counts <- mmrf_raw_counts[, mask]
+
+# remove patients who dropped out?..
+
+# for now, limit ourselves to baseline samples so that we have a single sample collected at the
+# same relative stage for each patient
+mask <- substr(colnames(mmrf_raw_counts), 11, 14) == '1_BM'
+mask[1] <- TRUE
+
+mmrf_raw_counts <- mmrf_raw_counts[, mask]
+colnames(mmrf_raw_counts) <- substr(colnames(mmrf_raw_counts), 1, 9)
+
+# drop rna-seq samples with no corresponding sample metadata (lose about 10%
+# of patients here who dropped out of the study)
+#mask <- substring(colnames(mmrf_raw_counts), 1, 9) %in% mmrf_mdat$public_id
+#message(sprintf("Excluding %d/%d patient RNA-Seq samples who dropped from study, or are missing metadata", sum(!mask), ncol(mmrf_raw_counts)))
+#mmrf_raw_counts <- mmrf_raw_counts[, mask]
+
+dataset_sizes <- rbind(dataset_sizes, c('mmrf', ncol(mmrf_raw_counts) - 1))
+
+# drop "ERCC" rows
+mask <- !startsWith(mmrf_raw_counts$GENE_ID, 'ERCC')
+mmrf_raw_counts <- mmrf_raw_counts[mask, ]
+
+# drop genes with zero variance
+mask <- apply(as.matrix(mmrf_raw_counts[, -1]), 1, var) > 0
+mmrf_raw_counts <- mmrf_raw_counts[mask, ]
+
+# create a cpm-normalized version of the raw counts
+mmrf_cpm_counts <- mmrf_raw_counts
+mmrf_col_sums <- colSums(mmrf_cpm_counts[, 2:ncol(mmrf_cpm_counts)])
+mmrf_cpm_counts[, 2:ncol(mmrf_cpm_counts)] <- sweep(mmrf_cpm_counts[, 2:ncol(mmrf_cpm_counts)],
+                                                    2, mmrf_col_sums, '/') * 1E6
+```
+
+```{r load_mmrf_patient_metadata, eval = !file.exists(outfile)}
+# load patient survival metadata
+# regular and censored overall & progression-free survival
+mmrf_mdat <- read_csv(file.path(mmrf_dir, 'clinical_data_tables/MMRF_CoMMpass_IA13_STAND_ALONE_SURVIVAL.csv'))
+
+mmrf_mdat <- mmrf_mdat %>%
+  select(public_id, pfsdy, pfscdy, oscdy, censos, censpfs)
+
+# limit metadata to those patients for which gene express data is present and match
+# orders
+mmrf_mdat <- mmrf_mdat[match(colnames(mmrf_raw_counts)[-1], mmrf_mdat$public_id), ]
+
+#all(mmrf_mdat$public_id == colnames(mmrf_raw_counts)[-1])
+# [1] TRUE
+```
+
+```{r mmrf_gene_wise_stats, eval = !file.exists(outfile)}
+gene_weights <- NULL
+
+# Kaplan-Meier survival regression
+#fit <- survival::survfit(survival::Surv(pfscdy, censpfs) ~ 1, data = mmrf_mdat)
+#fit <- survival::survfit(survival::Surv(oscdy, censos) ~ 1, data = mmrf_mdat)
+#fit <- survival::survfit(survival::Surv(pfscdy, censpfs) ~ 1, data = mmrf_mdat)
+
+# Cox regression (survival ~ gene)
+clusterExport(cl, c('mmrf_mdat'))
+tmp_ <- clusterCall(cl, function() library(survival))
+
+fits <- parApply(cl, as.matrix(mmrf_cpm_counts[, -1]), 1, function(x) {
+  summary(survival::coxph(survival::Surv(mmrf_mdat$pfscdy, mmrf_mdat$censpfs) ~ x))
+})
+
+# Cox regression Wald statistic
+cox_stat <- as.numeric(unlist(lapply(fits, function(x) {
+  x$waldtest['test']
+})))
+
+# Cox regression Wald P-value
+wald_pvals <- as.numeric(unlist(lapply(fits, function(x) {
+  x$waldtest['pvalue']
+})))
+
+gene_weights <- data.frame(ensgene = mmrf_cpm_counts$GENE_ID,
+                           mmrf_pfs_cox_stat = cox_stat, mmrf_pfs_cox_pval = wald_pvals)
+
+# SAMSeq
+#res <- SAMseq(as.matrix(mmrf_raw_counts[, -1]), mmrf_mdat$pfscdy, mmrf_mdat$censpfs,
+#              resp.type = 'Survival', geneid = mmrf_raw_counts$GENE_ID, random.seed = 1)
+
+#SAMseq(x, y, censoring.status = NULL,
+#resp.type = c("Quantitative", "Two class unpaired",
+#"Survival", "Multiclass", "Two class paired"),
+#geneid = NULL, genenames = NULL, nperms = 100,
+#random.seed = NULL, nresamp = 20, fdr.output = 0.20)
+
+# compute gene- or probe-wise distribution statistics
+gene_weights$mmrf_variance <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, var)
+gene_weights$mmrf_mad      <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, mad)
+gene_weights$mmrf_kurtosis <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, kurtosis)
+
+dip <- apply(as.matrix(mmrf_cpm_counts[, -1]), 1, dip.test)
+gene_weights$mmrf_dip_stat <- unlist(lapply(dip, function(x) { x$statistic }))
+gene_weights$mmrf_dip_pval <- unlist(lapply(dip, function(x) { x$p.val }))
+
+# silverman test
+NULL_NUM_MODES <- 1
+silv <- parApply(cl, as.matrix(mmrf_cpm_counts[, -1]), 1, silverman.test, NULL_NUM_MODES)
+
+gene_weights$mmrf_silv_pval <- unlist(lapply(silv, function(x) { x@p_value }))
+
+# save results
+write_csv(gene_weights, outfile)
+```

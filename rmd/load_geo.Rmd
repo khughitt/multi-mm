@@ -1,0 +1,192 @@
+### GEO
+
+```{r parse_geo_datasets, message = FALSE}
+# iterate over datasets and measure gene / phenotype correlation
+accessions <- list.files(geo_dir)
+
+#
+# datasets with no relevant covariate data available (used just for variance, etc.
+# gene-level stats)
+#
+# GSE31161
+# GSE7039
+#
+
+# list of factor covariates to process for each accession;
+# logistic regression models will be built for each such variable
+factor_covariates <- list(
+  "GSE116324" = c('bortezomib_response', 'iss_stage'),
+  "GSE118900" = c('mm_stage'),
+  "GSE19784"  = c('iss_stage', 'patient_subgroup'),
+  "GSE2113"   = c('mm_stage'),
+  "GSE24080"  = c('efs_event', 'os_event'),
+  "GSE2658"   = c('deceased', 'patient_subgroup'),
+  "GSE2912"   = c('mm_stage'),
+  "GSE6477"   = c('mm_stage'),
+  "GSE68871"  = c('treatment_response'),
+  "GSE7039"   = c('deceased'),
+  "GSE83503"  = c('death', 'relapse'),
+  "GSE9782"   = c('pgx_response', 'pgx_responder')
+)
+
+# survival-related covariates;
+# cox regression models will be constructed for each variable or pair of variables
+survival_covariates <- list(
+  "GSE19784" = list('os'  = c('os_months', 'os_event'),
+                    'pfs' = c('pfs_months', 'pfs_event')),
+  "GSE9782"  = list('os'  = c('os_days', 'os_censor'),
+                    'pfs' = c('pfs_days', 'pfs_censor')),
+  "GSE7039"  = list('os'  = c('follow_up_days', 'deceased'))
+)
+
+# keep track of the number of samples in each dataset
+# can be used to weight contributions of each source
+dataset_sizes <- NULL
+
+for (acc in accessions) {
+  # load gene expression data
+  data_dir <- file.path(geo_dir, acc, 'processed')
+
+  message(sprintf("Processing dataset %s", acc))
+
+  # filenames
+  expr_infile <- file.path(data_dir, sprintf("%s_expr.csv", acc))
+  mdat_infile <- file.path(data_dir, sprintf("%s_sample_metadata.csv", acc))
+
+  outfile <- file.path(output_dir, sprintf('gene_weights_%s.csv', acc))
+
+  # if the gene weights have already been computed, load from file and continue
+  if (file.exists(outfile)) {
+    message(sprintf("Skipping %s; output already exists...", acc))
+    next
+  }
+
+  # otherwise load gene expression data and sample metadata and compute weights
+  expr <- read_csv(expr_infile)
+
+  # data size
+  dataset_sizes <- rbind(dataset_sizes, c(acc, ncol(expr) - 2))
+
+  # create a version without the gene / probe identifiers
+  ID_COLS <- c('probe_id', 'gene_symbol', 'ensgene')
+  expr_mat <- as.matrix(expr[, !colnames(expr) %in% ID_COLS])
+
+  # load sample metadata
+  mdat <- read.csv(mdat_infile)
+
+  # initialize result variable;
+  gene_weights <- expr[, colnames(expr) %in% ID_COLS]
+
+  NUM_ID_COLS <- ncol(gene_weights)
+
+  # measure correlation or R^2 between each gene and each factor covariate
+  if (acc %in% names(factor_covariates)) {
+    # keep track of column names to use for output
+    output_cols <- c()
+
+    for (covariate in factor_covariates[[acc]]) {
+      message(sprintf("Processing %s / %s", acc, covariate))
+
+      # get covariate column
+      response <- mdat[, covariate]
+
+      # column name to use in output
+      output_colname <- make.names(sprintf("%s_%s", acc, covariate))
+      output_cols <- c(output_cols, output_colname)
+
+      # for factor columns, compute R^2 for a logit predicting the factor level
+      if (is.character(response) || length(unique(response)) < 10) {
+        response <- factor(response)
+
+        # multinomial logistic regression
+        null <- glm(response ~ 1, family="binomial")
+
+        clusterExport(cl, c('response', 'null'))
+
+        weight_vector <- parApply(cl, expr_mat, 1, function(x) {
+          mod <- glm(response ~ x, family = "binomial")
+
+          # compute pseudo-R^2
+          as.numeric(1 - logLik(mod) / logLik(null))
+        })
+      }
+      gene_weights <- cbind(gene_weights, weight_vector)
+    }
+
+    # fix column and row names and save to disk
+    colnames(gene_weights)[(NUM_ID_COLS + 1):ncol(gene_weights)] <- output_cols
+  }
+
+  # next, for those datasets with survival-related covariates, build cox regression
+  # models
+  if (acc %in% names(survival_covariates)) {
+    clusterExport(cl, c('mdat'))
+    tmp_ <- clusterCall(cl, function() library(survival))
+
+    for (survival_covariate_name in names(survival_covariates[[acc]])) {
+      message(sprintf("Processing %s / %s", acc, survival_covariate_name))
+
+      surv_cov <- survival_covariates[[acc]][[survival_covariate_name]]
+
+      clusterExport(cl, c('surv_cov'))
+
+      # survival duration + censor/event
+      #if (length(surv_cov) == 2) {
+
+      fits <- parApply(cl, expr_mat, 1, function(x) {
+        surv <- survival::Surv(time = mdat[, surv_cov[1]], event = mdat[, surv_cov[2]])
+        summary(survival::coxph(surv ~ x))
+      })
+
+      #} else {
+      #  # survival duration only
+      #  fits <- parApply(cl, expr_mat, 1, function(x) {
+      #    surv <- survival::Surv(time = mdat[, surv_cov[1]])
+      #    summary(survival::coxph(surv ~ x))
+      #  })
+      #}
+
+      # cox regression Wald statistic
+      cox_stat <- as.numeric(unlist(lapply(fits, function(x) {
+        x$waldtest['test']
+      })))
+
+      # cox regression Wald P-value
+      cox_pval <- as.numeric(unlist(lapply(fits, function(x) {
+        x$waldtest['pvalue']
+      })))
+
+      # add to gene weights and fix column names
+      gene_weights <- cbind(gene_weights, cox_stat, cox_pval)
+
+      cnames <- paste(acc, survival_covariate_name, c('cox_stat', 'cox_pval'), sep = '_')
+      colnames(gene_weights)[(ncol(gene_weights) - 1):ncol(gene_weights)] <- cnames
+
+      # for datasets with survival information, also measure functional enrichment
+
+    }
+  }
+
+  # compute gene- or probe-wise distribution statistics
+  gene_weights$variance <- apply(expr_mat, 1, var)
+  gene_weights$mad <- apply(expr_mat, 1, mad)
+  gene_weights$kurtosis <- apply(expr_mat, 1, kurtosis)
+
+  # dip test
+  dip <- apply(expr_mat, 1, dip.test)
+  gene_weights$dip_stat <- unlist(lapply(dip, function(x) { x$statistic }))
+  gene_weights$dip_pval <- unlist(lapply(dip, function(x) { x$p.val }))
+
+  # silverman test
+  NULL_NUM_MODES <- 1
+  silv <- parApply(cl, expr_mat, 1, silverman.test, NULL_NUM_MODES)
+  gene_weights$silv_pval <- unlist(lapply(silv, function(x) { x@p_value }))
+
+  # prepend dataset accession to column names
+  ind <- colnames(gene_weights) %in% c('variance', 'mad', 'kurtosis', 'dip_stat', 'dip_pval', 'silv_pval')
+
+  colnames(gene_weights)[ind] <- paste0(acc, '_', colnames(gene_weights)[ind])
+
+  write_csv(gene_weights, outfile)
+}
+```
