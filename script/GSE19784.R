@@ -91,7 +91,7 @@ survival_mdata <- survival_mdata %>%
   rename(geo_accession = Patient) %>%
   filter(geo_accession %in% colnames(eset))
 
-colnames(survival_mdata) <- c('geo_accession', 'os_months', 'os_event', 'pfs_months', 'pfs_event')
+colnames(survival_mdata) <- c('geo_accession', 'os_time', 'os_event', 'pfs_time', 'pfs_event')
 
 # exclude samples without metadata
 mask <- sample_metadata$geo_accession %in% survival_mdata$geo_accession

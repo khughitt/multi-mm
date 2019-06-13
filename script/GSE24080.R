@@ -70,10 +70,8 @@ num_missing <- apply(exprs(eset), 2, function(x) { sum(is.na(x)) })
 #   0 
 # 559 
 
-# unused
-
 # columns to include (GSE24080)
-efs <- as.numeric(endsWith(pData(eset)[, 'efs milestone outcome (24 months):ch1'], '0')) 
+pfs <- as.numeric(endsWith(pData(eset)[, 'efs milestone outcome (24 months):ch1'], '0')) 
 os  <- as.numeric(endsWith(pData(eset)[, 'os milestone outcome (24 months):ch1'], '0')) 
 
 sample_metadata <- pData(eset) %>%
@@ -81,7 +79,7 @@ sample_metadata <- pData(eset) %>%
          gender=`Sex:ch1`,
          age=`age:ch1`,
          maqc_status=`maqc_distribution_status:ch1`) %>%
-  add_column(efs_event = efs, os_event = os, .after = 'platform_id')
+  add_column(pfs_event = pfs, patient_died = os, .after = 'platform_id')
 
 # add cell type and disease (same for all samples)
 sample_metadata$disease = 'Multiple Myeloma'

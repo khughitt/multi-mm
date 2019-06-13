@@ -74,10 +74,10 @@ eset <- eset[, num_missing == 0]
 # columns to include (GSE2658)
 sample_metadata <- pData(eset) %>%
   select(geo_accession, platform_id, 
-         deceased = characteristics_ch1,
+         patient_died = characteristics_ch1,
          patient_subgroup = characteristics_ch1.8, characteristics_ch1.10) %>%
          mutate(contaminated = characteristics_ch1.10 == '[Subgrp7=MY]') %>%
-         mutate(deceased = startsWith(as.character(deceased), '[SURIND=1')) %>%
+         mutate(patient_died = startsWith(as.character(patient_died), '[SURIND=1')) %>%
          select(-characteristics_ch1.10) %>%
          mutate(patient_subgroup = sub("Subgrp7=", "", str_extract(patient_subgroup, "Subgrp7=[[:alnum:]]+")))
 

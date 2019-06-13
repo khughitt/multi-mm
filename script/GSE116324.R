@@ -89,7 +89,7 @@ for (cname in colnames(pData(eset))) {
 # columns to include (GSE116324)
 sample_metadata <- pData(eset) %>%
   select(geo_accession, platform_id,
-  bortezomib_response = `bortezomib response:ch1`,
+  treatment_response = `bortezomib response:ch1`,
   iss_stage = `iss stage:ch1`,
   age = `age:ch1`)
 

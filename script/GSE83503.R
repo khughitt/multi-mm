@@ -50,7 +50,7 @@ exprs(eset) <- sweep(exprs(eset), 2, colSums(exprs(eset)), '/') * 1E6
 # "treatment_protocol_ch1" is another alias for death;
 # "grow_protocol_ch1" is an alias for relapse;
 sample_metadata <- pData(eset) %>%
-  select(geo_accession, platform_id, death=`death:ch1`, relapse=`relapse:ch1`)
+  select(geo_accession, platform_id, patient_died=`death:ch1`, pfs_event=`relapse:ch1`)
 
 # add cell type and disease (same for all samples)
 sample_metadata$disease = 'Multiple Myeloma'
