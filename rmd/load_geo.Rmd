@@ -1,6 +1,6 @@
 ### GEO
 
-```{r parse_geo_datasets, message = FALSE}
+```{r parse_geo_datasets, message = FALSE, warning = FALSE}
 # iterate over datasets and measure gene / phenotype correlation
 accessions <- list.files(geo_dir)
 
@@ -15,33 +15,34 @@ accessions <- list.files(geo_dir)
 # list of factor covariates to process for each accession;
 # logistic regression models will be built for each such variable
 factor_covariates <- list(
-  "GSE116324" = c('bortezomib_response', 'iss_stage'),
+  "GSE116324" = c('treatment_response', 'iss_stage'),
   "GSE118900" = c('mm_stage'),
   "GSE19784"  = c('iss_stage', 'patient_subgroup'),
   "GSE2113"   = c('mm_stage'),
-  "GSE24080"  = c('efs_event', 'os_event'),
-  "GSE2658"   = c('deceased', 'patient_subgroup'),
+  "GSE24080"  = c('pfs_event', 'patient_died'),
+  "GSE2658"   = c('patient_died', 'patient_subgroup'),
   "GSE2912"   = c('mm_stage'),
   "GSE6477"   = c('mm_stage'),
   "GSE68871"  = c('treatment_response'),
-  "GSE7039"   = c('deceased'),
-  "GSE83503"  = c('death', 'relapse'),
-  "GSE9782"   = c('pgx_response', 'pgx_responder')
+  "GSE7039"   = c('patient_died'),
+  "GSE83503"  = c('patient_died', 'pfs_event'),
+  "GSE9782"   = c('treatment_response', 'patient_subgroup')
 )
 
 # survival-related covariates;
 # cox regression models will be constructed for each variable or pair of variables
 survival_covariates <- list(
-  "GSE19784" = list('os'  = c('os_months', 'os_event'),
-                    'pfs' = c('pfs_months', 'pfs_event')),
-  "GSE9782"  = list('os'  = c('os_days', 'os_censor'),
-                    'pfs' = c('pfs_days', 'pfs_censor')),
-  "GSE7039"  = list('os'  = c('follow_up_days', 'deceased'))
+  "GSE19784" = list('os'  = c('os_time', 'os_event'),
+                    'pfs' = c('pfs_time', 'pfs_event')),
+  "GSE9782"  = list('os'  = c('os_time', 'patient_died'),
+                    'pfs' = c('pfs_time', 'pfs_censor')),
+  "GSE7039"  = list('os'  = c('os_time', 'patient_died'))
 )
 
 # keep track of the number of samples in each dataset
 # can be used to weight contributions of each source
-dataset_sizes <- NULL
+dataset_num_rows <- c()
+dataset_num_cols <- c()
 
 for (acc in accessions) {
   # load gene expression data
@@ -53,31 +54,37 @@ for (acc in accessions) {
   expr_infile <- file.path(data_dir, sprintf("%s_expr.csv", acc))
   mdat_infile <- file.path(data_dir, sprintf("%s_sample_metadata.csv", acc))
 
-  outfile <- file.path(output_dir, sprintf('gene_weights_%s.csv', acc))
+  weights_outfile <- file.path(output_dir, sprintf('gene_weights_%s.csv', acc))
+  fgsea_outfile   <- file.path(output_dir, sprintf('fgsea_results_%s.csv', acc))
 
   # if the gene weights have already been computed, load from file and continue
-  if (file.exists(outfile)) {
-    message(sprintf("Skipping %s; output already exists...", acc))
-    next
-  }
+	if (file.exists(weights_outfile)) {
+		message(sprintf("Skipping %s; output already exists...", acc))
+		next
+	}
 
   # otherwise load gene expression data and sample metadata and compute weights
   expr <- read_csv(expr_infile)
 
+	# exclude any entries which couldn't be mapped to any gene symbols
+	expr <- expr[!is.na(expr$gene_symbol), ]	
+
+  # sample column indices
+  ID_COLS <- c('probe_id', 'gene_symbol', 'ensgene')
+	sample_ind <- !colnames(expr) %in% ID_COLS
+
   # data size
-  dataset_sizes <- rbind(dataset_sizes, c(acc, ncol(expr) - 2))
+  dataset_num_rows <- c(dataset_num_rows, nrow(expr))
+  dataset_num_cols <- c(dataset_num_cols, sum(sample_ind))
 
   # create a version without the gene / probe identifiers
-  ID_COLS <- c('probe_id', 'gene_symbol', 'ensgene')
-  expr_mat <- as.matrix(expr[, !colnames(expr) %in% ID_COLS])
+  expr_mat <- as.matrix(expr[, sample_ind])
 
   # load sample metadata
   mdat <- read.csv(mdat_infile)
 
   # initialize result variable;
-  gene_weights <- expr[, colnames(expr) %in% ID_COLS]
-
-  NUM_ID_COLS <- ncol(gene_weights)
+  gene_weights <- expr[, !sample_ind, drop = FALSE]
 
   # measure correlation or R^2 between each gene and each factor covariate
   if (acc %in% names(factor_covariates)) {
@@ -114,7 +121,7 @@ for (acc in accessions) {
     }
 
     # fix column and row names and save to disk
-    colnames(gene_weights)[(NUM_ID_COLS + 1):ncol(gene_weights)] <- output_cols
+    colnames(gene_weights)[(sum(!sample_ind) + 1):ncol(gene_weights)] <- output_cols
   }
 
   # next, for those datasets with survival-related covariates, build cox regression
@@ -161,15 +168,12 @@ for (acc in accessions) {
 
       cnames <- paste(acc, survival_covariate_name, c('cox_stat', 'cox_pval'), sep = '_')
       colnames(gene_weights)[(ncol(gene_weights) - 1):ncol(gene_weights)] <- cnames
-
-      # for datasets with survival information, also measure functional enrichment
-
     }
   }
 
   # compute gene- or probe-wise distribution statistics
   gene_weights$variance <- apply(expr_mat, 1, var)
-  gene_weights$mad <- apply(expr_mat, 1, mad)
+  gene_weights$mad      <- apply(expr_mat, 1, mad)
   gene_weights$kurtosis <- apply(expr_mat, 1, kurtosis)
 
   # dip test
@@ -183,10 +187,93 @@ for (acc in accessions) {
   gene_weights$silv_pval <- unlist(lapply(silv, function(x) { x@p_value }))
 
   # prepend dataset accession to column names
-  ind <- colnames(gene_weights) %in% c('variance', 'mad', 'kurtosis', 'dip_stat', 'dip_pval', 'silv_pval')
-
+	ind <- colnames(gene_weights) %in% c('variance', 'mad', 'kurtosis',
+																			 'dip_stat', 'dip_pval', 'silv_pval')
   colnames(gene_weights)[ind] <- paste0(acc, '_', colnames(gene_weights)[ind])
 
-  write_csv(gene_weights, outfile)
+	# covariate column names
+	pval_cols  <- colnames(gene_weights)[endsWith(colnames(gene_weights), 'pval')]
+	other_cols <- colnames(gene_weights)[startsWith(colnames(gene_weights), 'GSE') &
+																				!endsWith(colnames(gene_weights), 'pval')]
+
+	# for each gene that mapped to multiple probes, keep the most significant results;
+	# i.e. keep the maximum values for each non- p-value column and the minimum
+  # values for each p-value column
+	if ('probe_id' %in% colnames(gene_weights)) {
+		gene_weights <- gene_weights %>%
+			separate_rows(gene_symbol, sep = " ?/+ ?") %>%
+			group_by(gene_symbol) %>%
+			mutate_at(vars(other_cols), max) %>%
+			group_by_at(vars(other_cols), .add = TRUE) %>%
+			summarise_at(vars(pval_cols), min)
+	} else if ('ensgene' %in% colnames(gene_weights)) {
+		# for datasets with ensgenes + gene symbols, perform a similar summarization
+		# without the probe_id splitting step
+		gene_weights <- gene_weights %>%
+			group_by(gene_symbol) %>%
+			mutate_at(vars(other_cols), max) %>%
+			group_by_at(vars(other_cols), .add = TRUE) %>%
+			summarise_at(vars(pval_cols), min)
+	}
+
+	# store gene weights
+  write_csv(gene_weights, weights_outfile)
+
+	# create a dataframe to store enrichment results	
+	fgsea_res <- NULL
+
+	if (acc %in% names(factor_covariates)) {
+		# get updated column names
+		cov_cols <- sprintf('%s_%s', acc, factor_covariates[[acc]])
+
+		# iterate over covariates and gene sets
+		for (covariate in cov_cols) {
+			message(sprintf("Measuring functional enrichment for %s / %s", covariate, acc)) 
+			for (gene_set in names(gene_sets)) {
+				set.seed(1)
+
+				gene_stats <- setNames(gene_weights %>% pull(covariate), gene_weights$gene_symbol)
+
+				# measure functional enrichment
+				res <- fgsea(gene_sets[[gene_set]], gene_stats, nperm = 15000, nproc = MAX_THREADS) %>%
+					filter(padj < 0.05) %>%
+					select(-leadingEdge) %>%
+					arrange(padj)
+
+				if (nrow(res) > 0) {
+					fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
+				}
+			}
+		}	
+	}	
+
+	# functional enrichment for p-value columns
+	cov_cols <- colnames(gene_weights)[endsWith(colnames(gene_weights), '_pval')]
+
+	# iterate over covariates and gene sets
+	for (covariate in cov_cols) {
+		message(sprintf("Measuring functional enrichment for %s / %s", covariate, acc)) 
+		for (gene_set in names(gene_sets)) {
+			set.seed(1)
+
+			gene_stats <- setNames(gene_weights %>% pull(covariate), gene_weights$gene_symbol)
+			
+			# measure functional enrichment
+			res <- fgsea(gene_sets[[gene_set]], gene_stats, nperm = 15000, nproc = MAX_THREADS) %>%
+				filter(padj < 0.05) %>%
+				select(-leadingEdge) %>%
+				arrange(padj)
+
+			if (nrow(res) > 0) {
+				fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
+			}
+		}
+	}	
+
+	# store enrichment results
+	if (!is.null(fgsea_res)) {
+		write_csv(fgsea_res, fgsea_outfile)
+	}
 }
 ```
+

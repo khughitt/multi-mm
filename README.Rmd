@@ -14,6 +14,19 @@ output:
 2. Collapse multi-mapped probes prior to performing gene set enrichment (create
    duplicate rows for each gene symbol?..)
 
+- Annotate datasets?
+  - Are there any obvious factors that could explain why some datasets are more similar
+    to others?
+  - disease stage (MGUS vs. MM)
+  - cell line vs. patient
+  - dataset size
+  - response measure type
+  - platform
+- Visualize some examples at each step? (e.g. compare count distributions for a single
+  gene with high dip test?)
+- Measure pathway GSEA enrichment for suvival results!
+
+
 # IDEAS
 
 1. For final gene weights, use mostly survival, etc. R^2's since these are likely to be
@@ -21,7 +34,7 @@ output:
 2. For variance, etc. could try downloading a large number of "normal" (non-MM /
    non-cancer) samples and measure the same statistics. Then look for genes which have
    the highest variance in the MM samples, relative to healthy ones?
-3. Use RCellMiner, etc. to select drugs with various mechanisms and generated
+3. Use RCellMiner, etc. to select drugs with various mechanisms and generate
    gene weights targetted at each different type of drug mechanism?
    
 # Overview
@@ -61,25 +74,35 @@ opts_knit$set(verbose = TRUE)
 ```
 
 ```{r settings}
-GENE_MAX_MISSING_COVARIATES <- 2
+# maximum ratio of covariate variables to allow before exluding a gene
+# from the final score computation
+GENE_MAX_MISSING_COVARIATES <- 0.25
 ```
-
-**TODO**
-
-- Annotate datasets?
-  - Are there any obvious factors that could explain why some datasets are more similar
-    to others?
-  - disease stage / age of patients?
-  - cell line vs. patient
-  - size
-  - response measure type
-- Visualize some examples at each step? (e.g. compare count distributions for a single
-  gene with high dip test?)
-- Measure pathway GSEA enrichment for suvival results!
 
 ```{r initialize_cluster}
 # create paralellization handler
 cl <- makeCluster(MAX_THREADS, outfile='')
+```
+
+```{r load_gene_sets}
+annot_dir <- '/data/annotations'
+
+#msigdb_files  <- sprintf('%s.all.v6.2.symbols.gmt', c('h', 'c2', 'c5', 'c6', 'c7'))
+#enrichr_files <- c('LINCS_L1000_Ligand_Perturbations_down.txt',
+#                   'Kinase_Perturbations_from_GEO_up.txt', 'DSigDB.txt',
+#                   'OMIM_Disease.txt')
+
+bader_files   <- Sys.glob(file.path(annot_dir, 'bader_gene_sets', '*.gmt')) 
+dsigdb_files  <- file.path(annot_dir, 'dsigdb', '1.0', 'DSigDB_All.gmt')
+enrichr_files <- Sys.glob(file.path(annot_dir, 'enrichr', '*.txt'))
+gdsc_files    <- Sys.glob(file.path(annot_dir, 'gdsc_drug_modules', '*-nr.gmt'))
+msigdb_files  <- file.path(annot_dir, 'msigdb', 'v6.2', 'msigdb.v6.2.symbols.gmt')
+
+gene_set_files <- c(bader_files, dsigdb_files, enrichr_files, gdsc_files, msigdb_files)
+
+gene_sets <- lapply(gene_set_files, function(x) { geneIds(getGmt(x)) })
+
+names(gene_sets) <- tools::file_path_sans_ext(basename(gene_set_files)) 
 ```
 
 ## Process datasets
@@ -91,16 +114,25 @@ cl <- makeCluster(MAX_THREADS, outfile='')
 ```{r child='rmd/load_mmrf.Rmd'}
 ```
 
-```{r, include = FALSE, eval = FALSE}
-# save dataset size information
-colnames(dataset_sizes) <- c('dataset', 'num_samples')
-dataset_sizes <- as.data.frame(dataset_sizes)
-dataset_sizes$num_samples <- as.numeric(dataset_sizes$num_samples)
-
-write_csv(dataset_sizes, 'output/datasets.csv')
-```
-
 ## Results
+
+
+```{r dataset_summary, results = 'asis')
+# store dataset dimensions
+outfile <- file.path(output_dir, 'dataset_dimensions.csv')
+
+if (!file.exists(outfile)) {
+	dataset_dimensions <- data.frame(acc = accessions, num_rows = dataset_num_rows, 
+																	 num_cols = dataset_num_cols)
+	write_csv(dataset_dimensions, outfile)
+} else {
+	dataset_dimensions <- read_csv(outfile)
+}
+
+cat(sprintf('- # datasets: %d\n', length(accessions)))
+cat(sprintf('- # genes: %d\n', sum(dataset_dimensions$num_rows)))
+cat(sprintf('- # samples: %d\n', sum(dataset_dimensions$num_cols)))
+```
 
 ```{r results, message = FALSE}
 # create variables to store result matrices
@@ -110,38 +142,6 @@ dat <- NULL
 for (dataset in Sys.glob('output/gene_weights_*')) {
   # load gene expression data
   gene_weights <- read_csv(dataset)
-
-  # for GEO microarray datasets, expand probes mapping to more than a single gene
-  # and take the
-  if ('probe_id' %in% colnames(gene_weights)) {
-    gene_weights <- gene_weights %>%
-      separate_rows(gene_symbol, sep = "\\s+///?\\s+") %>%
-      select(-probe_id)
-
-    # drop probes that couldn't be mapped
-    gene_weights <- gene_weights[!is.na(gene_weights$gene_symbol), ]
-
-    # find minimum pvalues / max statistics for each gene
-    gene_stats <- gene_weights %>%
-      select(-matches('pval_?\\d*$')) %>%
-      group_by(gene_symbol) %>%
-      summarize_all(max) %>%
-      ungroup
-
-    gene_pvals <- gene_weights %>%
-      select(gene_symbol, matches('pval_?\\d*$')) %>%
-      group_by(gene_symbol) %>%
-      summarize_all(min) %>%
-      ungroup %>%
-      select(-gene_symbol)
-
-    gene_weights <- cbind(gene_stats, gene_pvals)
-  }
-
-  # for MMRF data, add gene symbol column
-  if (dataset == 'output/gene_weights_MMRF.csv') {
-    gene_weights$gene_symbol <- grch37$symbol[match(gene_weights$ensgene, grch37$ensgene)]
-  }
 
   # add to combined dataset
   if (is.null(dat)) {
@@ -165,54 +165,35 @@ for (dataset in Sys.glob('output/gene_weights_*')) {
 dat <- dat %>%
   filter(!is.na(gene_symbol))
 
+# dups <- dat$gene_symbol[duplicated(dat$gene_symbol)]
+#length(dups)
+# [1] 0
+
+#head(dups)
+# [1] "5S_rRNA" "5S_rRNA" "5S_rRNA" "5S_rRNA" "5S_rRNA" "5S_rRNA"
+
 # aggregate any remaining duplicated gene entries, as before
 gene_stats <- dat %>%
-  select(-matches('pval_?\\d*$')) %>%
-  group_by(gene_symbol) %>%
-  summarize_all(max) %>%
-  ungroup
+	select(-matches('_pval$')) %>%
+	group_by(gene_symbol) %>%
+	summarize_all(max) %>%
+	ungroup
 
 gene_pvals <- dat %>%
-  select(gene_symbol, matches('pval_?\\d*$')) %>%
-  group_by(gene_symbol) %>%
-  summarize_all(min) %>%
-  ungroup %>%
-  select(-gene_symbol)
+	select(gene_symbol, matches('_pval$')) %>%
+	group_by(gene_symbol) %>%
+	summarize_all(min) %>%
+	ungroup %>%
+	select(-gene_symbol)
 
 dat <- cbind(gene_stats, gene_pvals)
 
 # reorder columns
-id_cols <- c('ensgene', 'gene_symbol')
+id_cols <- c('gene_symbol', 'ensgene')
 dat <- dat[, c(id_cols, colnames(dat)[!colnames(dat) %in% id_cols])]
 
 # save combined gene weight data
 write_csv(dat, 'output/combined_gene_weights.csv')
-```
-
-```{r load_gene_sets}
-annot_dir <- '/data/annotations/'
-
-msigdb_files  <- sprintf('%s.all.v6.2.symbols.gmt', c('h', 'c2', 'c5', 'c6', 'c7'))
-bader_files   <- c('Human_DrugBank_all_symbol.gmt', 'Human_NCI_Nature_April_01_2019_symbol.gmt')
-enrichr_files <- c('LINCS_L1000_Ligand_Perturbations_down.txt',
-                   'Kinase_Perturbations_from_GEO_up.txt', 'DSigDB.txt',
-                   'OMIM_Disease.txt')
-
-gene_set_files <- c(
-  file.path(annot_dir, 'msigdb', 'v6.2', msigdb_files),
-  file.path(annot_dir, 'bader_gene_sets', bader_files),
-  file.path(annot_dir, 'enrichr', enrichr_files)
-)
-gene_sets <- lapply(gene_set_files, function(x) { geneIds(getGmt(x)) })
-
-names(gene_sets) <- basename(gene_set_files)
-```
-
-```{r results = 'asis', include = FALSE, eval = FALSE}
-### Datasets included
-kable(dataset_sizes %>% arrange(desc(num_samples)))
-
-cat(sprintf("\n- Total: %d\n", sum(dataset_sizes$num_samples)))
 ```
 
 ### Gene Weights Overview
@@ -296,10 +277,13 @@ gene_num_na <- apply(covariate_dat, 1, function(x) { sum(is.na(x)) })
 
 #table(gene_num_na)
 # gene_num_na
-#     0     2     3     4     5     6     7     8     9    11    16    18    20    22 
-#  3914  7320  3197   808  1977   349   772   908  1654  1290  1645 20258 15380  2641 
+#     0     1     2     3     4     5     6     7     8     9    10    11    12    13    14    15 
+#  5465   206   176  6250   571   672  2676   369   810   834   910   526   335  1604    38   168 
+#    16    17    18    19    20    21    22    23    24    25    26    27    28 
+#   106  1192    52     8    93   578   442   954 19075  1702 14054   977   632 
 
-covariate_dat <- covariate_dat[gene_num_na <= GENE_MAX_MISSING_COVARIATES, ]
+max_na <- ceiling(GENE_MAX_MISSING_COVARIATES * ncol(covariate_dat))
+covariate_dat <- covariate_dat[gene_num_na <= max_na, ]
 
 covariate_cor_mat <- round(cor(covariate_dat, use = 'pairwise.complete.obs'), 2)
 
