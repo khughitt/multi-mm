@@ -1,0 +1,66 @@
+```{r load_gene_weight_results, message = FALSE}
+# create variables to store result matrices
+gene_weights <- NULL
+
+# get a list of dataset accessions
+dataset_accessions <- str_match(Sys.glob(file.path(output_dir, 'gene_weights_*')), 
+                                'gene_weights_(.*).csv')[, 2]
+
+# load GEO, etc. datasets
+for (dataset in Sys.glob(file.path(output_dir, 'gene_weights_*'))) {
+  # load gene expression data
+  dat <- read_csv(dataset)
+
+  # add to combined dataset
+  if (is.null(gene_weights)) {
+    gene_weights <- dat
+  } else {
+    if ('ensgene' %in% colnames(gene_weights) && 'ensgene' %in% colnames(dat)) {
+      dat <- dat %>%
+        select(-ensgene)
+    }
+    gene_weights <- gene_weights %>%
+      full_join(dat, by = 'gene_symbol')
+  }
+}
+
+#table(duplicated(gene_weights$gene_symbol))
+# 
+# FALSE  TRUE 
+# 61475  1782 
+ 
+# drop any entries with no associated gene symbols
+gene_weights <- gene_weights %>%
+  filter(!is.na(gene_symbol))
+
+# dups <- gene_weights$gene_symbol[duplicated(gene_weights$gene_symbol)]
+#length(dups)
+# [1] 0
+
+#head(dups)
+# [1] "5S_rRNA" "5S_rRNA" "5S_rRNA" "5S_rRNA" "5S_rRNA" "5S_rRNA"
+
+# aggregate any remaining duplicated gene entries, as before
+gene_stats <- gene_weights %>%
+	select(-matches('_pval$')) %>%
+	group_by(gene_symbol) %>%
+	summarize_all(max) %>%
+	ungroup
+
+gene_pvals <- gene_weights %>%
+	select(gene_symbol, matches('_pval$')) %>%
+	group_by(gene_symbol) %>%
+	summarize_all(min) %>%
+	ungroup %>%
+	select(-gene_symbol)
+
+gene_weights <- cbind(gene_stats, gene_pvals)
+
+# reorder columns
+id_cols <- c('gene_symbol', 'ensgene')
+gene_weights <- gene_weights[, c(id_cols, colnames(gene_weights)[!colnames(gene_weights) %in% id_cols])]
+
+# save combined gene weight data
+write_csv(gene_weights, file.path(output_dir, 'combined_gene_weights.csv'))
+```
+

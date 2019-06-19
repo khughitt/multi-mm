@@ -17,16 +17,18 @@ opts_chunk$set(
 set.seed(1)
 
 # base and data directories
-base_dir <- normalizePath(file.path(getwd(), '..'))
-output_dir <- file.path(base_dir, 'output')
 public_data_dir <- '/data/public/human'
-geo_dir         <- file.path(public_data_dir, 'geo')
-mmrf_dir        <- file.path(public_data_dir, 'mmrf_commpass/IA13')
+
+base_dir   <- normalizePath(file.path(getwd(), '..'))
+input_dir  <- file.path(base_dir, 'input')
+output_dir <- file.path(base_dir, 'output')
+geo_dir    <- file.path(public_data_dir, 'geo')
+mmrf_dir   <- file.path(public_data_dir, 'mmrf_commpass/IA13')
 
 opts_knit$set(root.dir = base_dir)
 
 # output directory
-today <- format(Sys.time(), '%Y-%m-%d')
+#today <- format(Sys.time(), '%Y-%m-%d')
 
 # ggplot theme
 theme_bw_high_res <- function (base_size = 11, base_line_size = 0.5) { 
@@ -38,6 +40,7 @@ theme_bw_high_res <- function (base_size = 11, base_line_size = 0.5) {
 # maximum number of threads to use for parallel processes
 MAX_THREADS <- 50
 MAX_THREADS <- max(1, min(detectCores() - 4, MAX_THREADS, na.rm=TRUE))
+
+# create paralellization handler
+cl <- makeCluster(MAX_THREADS, outfile='')
 ```
-
-
