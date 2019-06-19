@@ -5,7 +5,7 @@
 accessions <- list.files(geo_dir)
 
 #
-# datasets with no relevant covariate data available (used just for variance, etc.
+# datasets with no relevant covariate data available (used just for sd, etc.
 # gene-level stats)
 #
 # GSE31161
@@ -35,14 +35,9 @@ survival_covariates <- list(
   "GSE19784" = list('os'  = c('os_time', 'os_event'),
                     'pfs' = c('pfs_time', 'pfs_event')),
   "GSE9782"  = list('os'  = c('os_time', 'patient_died'),
-                    'pfs' = c('pfs_time', 'pfs_censor')),
+                    'pfs' = c('pfs_time', 'pfs_event')),
   "GSE7039"  = list('os'  = c('os_time', 'patient_died'))
 )
-
-# keep track of the number of samples in each dataset
-# can be used to weight contributions of each source
-dataset_num_rows <- c()
-dataset_num_cols <- c()
 
 for (acc in accessions) {
   # load gene expression data
@@ -73,17 +68,13 @@ for (acc in accessions) {
   ID_COLS <- c('probe_id', 'gene_symbol', 'ensgene')
 	sample_ind <- !colnames(expr) %in% ID_COLS
 
-  # data size
-  dataset_num_rows <- c(dataset_num_rows, nrow(expr))
-  dataset_num_cols <- c(dataset_num_cols, sum(sample_ind))
-
   # create a version without the gene / probe identifiers
   expr_mat <- as.matrix(expr[, sample_ind])
 
   # load sample metadata
   mdat <- read.csv(mdat_infile)
 
-  # initialize result variable;
+  # initialize result variable; creates a dataframe with only the gene identifiers
   gene_weights <- expr[, !sample_ind, drop = FALSE]
 
   # measure correlation or R^2 between each gene and each factor covariate
@@ -114,7 +105,7 @@ for (acc in accessions) {
           mod <- glm(response ~ x, family = "binomial")
 
           # compute pseudo-R^2
-          as.numeric(1 - logLik(mod) / logLik(null))
+          max(as.numeric(1 - logLik(mod) / logLik(null)), 0)
         })
       }
       gene_weights <- cbind(gene_weights, weight_vector)
@@ -172,7 +163,9 @@ for (acc in accessions) {
   }
 
   # compute gene- or probe-wise distribution statistics
-  gene_weights$variance <- apply(expr_mat, 1, var)
+  gene_weights$mean     <- apply(expr_mat, 1, mean)
+  gene_weights$median   <- apply(expr_mat, 1, median)
+  gene_weights$sd       <- apply(expr_mat, 1, sd)
   gene_weights$mad      <- apply(expr_mat, 1, mad)
   gene_weights$kurtosis <- apply(expr_mat, 1, kurtosis)
 
@@ -181,20 +174,14 @@ for (acc in accessions) {
   gene_weights$dip_stat <- unlist(lapply(dip, function(x) { x$statistic }))
   gene_weights$dip_pval <- unlist(lapply(dip, function(x) { x$p.val }))
 
-  # silverman test
-  NULL_NUM_MODES <- 1
-  silv <- parApply(cl, expr_mat, 1, silverman.test, NULL_NUM_MODES)
-  gene_weights$silv_pval <- unlist(lapply(silv, function(x) { x@p_value }))
-
   # prepend dataset accession to column names
-	ind <- colnames(gene_weights) %in% c('variance', 'mad', 'kurtosis',
-																			 'dip_stat', 'dip_pval', 'silv_pval')
+  ind <- colnames(gene_weights) %in% c('mean', 'median', 'sd', 'mad', 'kurtosis', 'dip_stat', 'dip_pval')
   colnames(gene_weights)[ind] <- paste0(acc, '_', colnames(gene_weights)[ind])
 
 	# covariate column names
 	pval_cols  <- colnames(gene_weights)[endsWith(colnames(gene_weights), 'pval')]
 	other_cols <- colnames(gene_weights)[startsWith(colnames(gene_weights), 'GSE') &
-																				!endsWith(colnames(gene_weights), 'pval')]
+  																		 !endsWith(colnames(gene_weights), 'pval')]
 
 	# for each gene that mapped to multiple probes, keep the most significant results;
 	# i.e. keep the maximum values for each non- p-value column and the minimum
