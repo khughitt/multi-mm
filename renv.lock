@@ -364,9 +364,9 @@ Hash=9877f56dda88827d0c0e24de3bee3d73
 
 [R/Package/dbplyr]
 Package=dbplyr
-Version=1.4.1
+Version=1.4.2
 Source=CRAN
-Hash=727bebd03430076b64a2b30ed6fada6b
+Hash=49a0d7f120de761b3e98b7cbca6cf4c2
 
 [R/Package/dendextend]
 Package=dendextend
@@ -454,9 +454,9 @@ Hash=dbf7619e27fb08d45eda81527dbe60a6
 
 [R/Package/formatR]
 Package=formatR
-Version=1.6
+Version=1.7
 Source=CRAN
-Hash=5310d2c9bf850beb7c4a7b93d42a0aa9
+Hash=ff71cc3f6835f20b63ab410cba48e002
 
 [R/Package/fs]
 Package=fs
@@ -496,9 +496,9 @@ Hash=535279fb8af0234a10424cfb5c83260f
 
 [R/Package/ggplot2]
 Package=ggplot2
-Version=3.1.1
+Version=3.2.0
 Source=CRAN
-Hash=924eec7319f30c8e8ce196386bf8b829
+Hash=98223d80bc61686f2c163d8756e9b38c
 
 [R/Package/glue]
 Package=glue
@@ -620,6 +620,12 @@ Version=1.0.10
 Source=CRAN
 Hash=820915a2891e5350f6e3d7dc98f6489f
 
+[R/Package/janitor]
+Package=janitor
+Version=1.2.0
+Source=CRAN
+Hash=2ed3048576116de7e00d515c8b104b96
+
 [R/Package/jomo]
 Package=jomo
 Version=2.6-8
@@ -631,6 +637,12 @@ Package=jsonlite
 Version=1.6
 Source=CRAN
 Hash=1527c6ad6c00ff3f0d0a02b01650fd87
+
+[R/Package/kableExtra]
+Package=kableExtra
+Version=1.1.0
+Source=CRAN
+Hash=0637ed6e26a9506f26105ba5045eb458
 
 [R/Package/knitr]
 Package=knitr
@@ -708,9 +720,9 @@ Hash=c079d05aaae9556f4dbeea615a764871
 
 [R/Package/markdown]
 Package=markdown
-Version=0.9
+Version=1.0
 Source=CRAN
-Hash=1ee034245d9f360cb0dfa86ff46a24d9
+Hash=df98b6f344f9a72d67863dccdde3d95b
 
 [R/Package/matrixStats]
 Package=matrixStats
@@ -738,9 +750,9 @@ Hash=7a2006ecdb86bd5f5b695644cfc58f6c
 
 [R/Package/mime]
 Package=mime
-Version=0.6
+Version=0.7
 Source=CRAN
-Hash=00690a1726fcfc215a3e5908bf56802b
+Hash=e1d17e6e0d960a206a93670a75d1ef4d
 
 [R/Package/minqa]
 Package=minqa
@@ -825,6 +837,12 @@ Package=pan
 Version=1.6
 Source=CRAN
 Hash=06aed85ddcc6fcb0998d290da988b176
+
+[R/Package/pander]
+Package=pander
+Version=0.6.3
+Source=CRAN
+Hash=b9e51a0e895b41cdd6621c6343f9886a
 
 [R/Package/pillar]
 Package=pillar
@@ -984,9 +1002,9 @@ Hash=1fb5dfb3e338005d14339d1f89fbc15c
 
 [R/Package/seriation]
 Package=seriation
-Version=1.2-6
+Version=1.2-7
 Source=CRAN
-Hash=4bf03c24c77b4062e912e1a022ab2a45
+Hash=5a58818b7c14c8bf8ffcfd49d3580536
 
 [R/Package/shiny]
 Package=shiny
@@ -1011,6 +1029,12 @@ RemoteRef=master
 RemoteSha=1d4200a4020c2c2fb30cd9ba869ee0c9bd4d51b8
 RemoteHost=api.github.com
 Hash=2fa77e58aff382296e78393854f73bd4
+
+[R/Package/snakecase]
+Package=snakecase
+Version=0.11.0
+Source=CRAN
+Hash=c0a420c0a5edfc84f628114c2f6d6b13
 
 [R/Package/snow]
 Package=snow
