@@ -94,6 +94,17 @@ expr_dat <- exprs(eset) %>%
   rownames_to_column('probe_id') %>%
   add_column(gene_symbol = gene_symbols, .after = 1)
 
+# remove five samples with MAQC_Remove flag
+# MAQC_Remove    Training  Validation                                                          
+#          5         340         214 
+bad_samples <- sample_metadata %>%
+  filter(maqc_status == 'MAQC_Remove') %>%
+  pull(geo_accession)
+
+sample_metadata <- sample_metadata %>%
+  filter(maqc_status != 'MAQC_Remove')
+expr_dat <- expr_dat[, !colnames(expr_dat) %in% bad_samples]
+
 # determine filenames to use for outputs and save to disk
 expr_outfile <- sprintf('%s_expr.csv', accession)
 sample_outfile <- sprintf('%s_sample_metadata.csv', accession)

@@ -60,6 +60,7 @@ esets <- getGEO(accession, destdir = raw_data_dir, AnnotGPL = TRUE)
 
 # report data processing used
 print(as.character(pData(esets[[1]])$data_processing[1]))
+print(as.character(pData(esets[[2]])$data_processing[2]))
 
 # 
 # Note: some of the metadata fields appear to be incorrectly encoded, e.g.:
@@ -73,17 +74,17 @@ print(as.character(pData(esets[[1]])$data_processing[1]))
 
 # to get around this, we will manually detect and parse those fields..
 sample_metadata <- pData(esets[[1]]) %>%
-mutate(
-  study_code         = as.numeric(str_match(characteristics_ch1, '\\d+$')),
-  treatment          = str_match(characteristics_ch1.1, '\\w+$'),
-  gender             = str_match(characteristics_ch1.2, '\\w+$'),
-  ethnicity          = str_match(characteristics_ch1.3, '\\w+$'),
-  age                = as.numeric(str_match(characteristics_ch1.4, '\\d+$')),
-  treatment_response = str_match(characteristics_ch1.7, '\\w+$'), 
-  patient_subgroup   = str_match(characteristics_ch1.8, '\\w+$')) %>%
-select(geo_accession, platform_id, study_code, treatment, gender,
-        ethnicity, age, treatment_response, patient_subgroup) %>%
-add_column(geo_accession2 = pData(esets[[2]])$geo_accession, .after = 1)
+  mutate(
+    study_code         = as.numeric(str_match(characteristics_ch1, '\\d+$')),
+    treatment          = str_match(characteristics_ch1.1, '\\w+$'),
+    gender             = str_match(characteristics_ch1.2, '\\w+$'),
+    ethnicity          = str_match(characteristics_ch1.3, '\\w+$'),
+    age                = as.numeric(str_match(characteristics_ch1.4, '\\d+$')),
+    treatment_response = str_match(characteristics_ch1.7, '\\w+$'), 
+    patient_subgroup   = str_match(characteristics_ch1.8, '\\w+$')) %>%
+  select(geo_accession, platform_id, study_code, treatment, gender,
+          ethnicity, age, treatment_response, patient_subgroup) %>%
+  add_column(geo_accession2 = pData(esets[[2]])$geo_accession, .after = 1)
 
 # convert metadata from factor to character columns for parsing
 str_mdat <- pData(esets[[1]]) 
