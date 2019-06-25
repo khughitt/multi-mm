@@ -133,7 +133,12 @@ mmrf_treatment <- mmrf_treatment[match(colnames(mmrf_cpm_counts)[-1], mmrf_treat
 #                                         52                                         43 
 # 
 
-treatments <- head(names(sort(table(mmrf_treatment$trtshnm), TRUE)))
+#treatments <- head(names(sort(table(mmrf_treatment$trtshnm), TRUE)))
+#treatments
+# [1] "Bor-Len-Dex" "Bor-Cyc-Dex" "Car-Len-Dex" "Bor-Dex"     "Len-Dex"     "Car-Cyc-Dex"
+
+# treatment covariates associated with functional enrichment
+treatments <- c('Bor-Len-Dex', 'Bor-Cyc-Dex', 'Bor-Dex', 'Car-Cyc-Dex')
 
 # for each common treatment, build a model predict treatment first response;
 for (treatment in treatments) {
@@ -286,19 +291,14 @@ for (covariate in cov_cols) {
 
     # measure functional enrichment
     res <- fgsea(gene_sets[[gene_set]], gene_stats, nperm = 15000, nproc = MAX_THREADS) %>%
-      filter(padj < 0.05) %>%
       select(-leadingEdge) %>%
       arrange(padj)
 
-    if (nrow(res) > 0) {
-      fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
-    }
+    fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
   }
 }	
 
 # store enrichment results
-if (!is.null(fgsea_res)) {
-  write_csv(fgsea_res, fgsea_outfile)
-}
+write_csv(fgsea_res, fgsea_outfile)
 ```
 

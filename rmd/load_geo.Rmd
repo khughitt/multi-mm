@@ -15,13 +15,15 @@ accessions <- list.files(geo_dir)
 # list of factor covariates to process for each accession;
 # logistic regression models will be built for each such variable
 factor_covariates <- list(
-  "GSE116324" = c('treatment_response', 'iss_stage'),
+  "GSE116324" = c('treatment_response'),
   "GSE118900" = c('mm_stage'),
   "GSE19784"  = c('iss_stage', 'patient_subgroup'),
   "GSE2113"   = c('mm_stage'),
   "GSE24080"  = c('pfs_event', 'patient_died'),
   "GSE2658"   = c('patient_died', 'patient_subgroup'),
   "GSE2912"   = c('mm_stage'),
+  "GSE47552"  = c('mm_stage'),
+  "GSE57317"  = c('patient_subgroup'),
   "GSE6477"   = c('mm_stage'),
   "GSE68871"  = c('treatment_response'),
   "GSE7039"   = c('patient_died'),
@@ -36,7 +38,8 @@ survival_covariates <- list(
                     'pfs' = c('pfs_time', 'pfs_event')),
   "GSE9782"  = list('os'  = c('os_time', 'patient_died'),
                     'pfs' = c('pfs_time', 'pfs_event')),
-  "GSE7039"  = list('os'  = c('os_time', 'patient_died'))
+  "GSE7039"  = list('os'  = c('os_time', 'patient_died')),
+  "GSE57317" = list('os'  = c('os_time', 'os_event'))
 )
 
 for (acc in accessions) {
@@ -57,6 +60,12 @@ for (acc in accessions) {
 		message(sprintf("Skipping %s; output already exists...", acc))
 		next
 	}
+
+  # if data is missing, skip
+  if (!file.exists(expr_infile)) {
+		message(sprintf("Skipping %s; data unavailable...", acc))
+		next
+  }
 
   # otherwise load gene expression data and sample metadata and compute weights
   expr <- read_csv(expr_infile)
@@ -223,13 +232,10 @@ for (acc in accessions) {
 
 				# measure functional enrichment
 				res <- fgsea(gene_sets[[gene_set]], gene_stats, nperm = 15000, nproc = MAX_THREADS) %>%
-					filter(padj < 0.05) %>%
 					select(-leadingEdge) %>%
 					arrange(padj)
 
-				if (nrow(res) > 0) {
-					fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
-				}
+        fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
 			}
 		}	
 	}	
@@ -247,20 +253,15 @@ for (acc in accessions) {
 			
 			# measure functional enrichment
 			res <- fgsea(gene_sets[[gene_set]], gene_stats, nperm = 15000, nproc = MAX_THREADS) %>%
-				filter(padj < 0.05) %>%
 				select(-leadingEdge) %>%
 				arrange(padj)
 
-			if (nrow(res) > 0) {
-				fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
-			}
+      fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
 		}
 	}	
 
 	# store enrichment results
-	if (!is.null(fgsea_res)) {
-		write_csv(fgsea_res, fgsea_outfile)
-	}
+  write_csv(fgsea_res, fgsea_outfile)
 }
 ```
 

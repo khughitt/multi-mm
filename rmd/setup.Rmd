@@ -25,6 +25,12 @@ output_dir <- file.path(base_dir, 'output')
 geo_dir    <- file.path(public_data_dir, 'geo')
 mmrf_dir   <- file.path(public_data_dir, 'mmrf_commpass/IA13')
 
+output_dir <- file.path(base_dir, 'output')
+
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, mode = '0755')
+}
+
 opts_knit$set(root.dir = base_dir)
 
 # output directory

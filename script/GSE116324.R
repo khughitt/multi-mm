@@ -86,11 +86,13 @@ for (cname in colnames(pData(eset))) {
 # treatment:ch1
 # time of testing:ch1
 
+# iss stage:ch1 also explored but was not found to be informative (uncorrelated with
+# all other covariates / not functionally enriched)
+
 # columns to include (GSE116324)
 sample_metadata <- pData(eset) %>%
   select(geo_accession, platform_id,
   treatment_response = `bortezomib response:ch1`,
-  iss_stage = `iss stage:ch1`,
   age = `age:ch1`)
 
 # add cell type and disease (same for all samples)
