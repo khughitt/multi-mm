@@ -6,7 +6,11 @@
 # gene-level stats)
 #
 # GSE31161
+# GSE6699
 # GSE7039
+#
+# Question: For datasets with "healthy" samples, should we also check for genes that
+# differ the most between MM/healthy individuals?
 #
 
 # list of factor covariates to process for each accession;
