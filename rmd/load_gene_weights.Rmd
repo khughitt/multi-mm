@@ -3,11 +3,14 @@
 gene_weights <- NULL
 
 # get a list of dataset accessions
-dataset_accessions <- str_match(Sys.glob(file.path(output_dir, 'gene_weights_*')), 
-                                'gene_weights_(.*).csv')[, 2]
+weight_files <- Sys.glob(file.path(output_dir, '*_gene_weights.csv'))
+weight_files <- weight_files[!grepl('combined', weight_files)]
+
+dataset_accessions <- str_match(weight_files, 'output/(.*)_gene_weights.csv')[, 2]
+dataset_accessions <- dataset_accessions[dataset_accessions != 'combined']
 
 # load GEO, etc. datasets
-for (dataset in Sys.glob(file.path(output_dir, 'gene_weights_*'))) {
+for (dataset in weight_files) {
   # load gene expression data
   dat <- read_csv(dataset)
 

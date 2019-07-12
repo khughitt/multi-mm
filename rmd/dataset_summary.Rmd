@@ -4,9 +4,21 @@ datasets <- read_tsv(file.path(input_dir, 'datasets.tsv')) %>%
          incl_stge = !is.na(includes_disease_stage),
          incl_resp = !is.na(includes_treatment_response))
 
+# limit to geo datasets that have been processed + MMRF CoMMpass data
+geo_accessions <- list.files(geo_dir)
+
+datasets <- datasets %>%
+  filter(accession %in% c('mmrf', geo_accessions))
+
 datasets %>%
   select(dataset, num_samples, num_genes, incl_surv, incl_stge, incl_resp, disease_stage, accession) %>%
   arrange(desc(num_samples)) %>%
   kable
 ```
+
+```{r results = 'asis'}
+cat(sprintf('- # Datasets: %d\n', nrow(datasets)))
+cat(sprintf('- # Samples: %d\n',  sum(datasets$num_samples)))
+```
+
 

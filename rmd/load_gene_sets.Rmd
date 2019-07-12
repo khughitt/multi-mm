@@ -18,5 +18,13 @@ names(gene_sets) <- tools::file_path_sans_ext(basename(gene_set_files))
 for (gset in names(gene_sets)) {
   gene_sets[[gset]] <- lapply(gene_sets[[gset]], function(x) { sub(',\\d+\\.\\d+$', '', x) }) 
 }
+
+# exclude any gene sets with fewer than the required number of genes
+for (gset in names(gene_sets)) {
+	set_sizes <- lapply(gene_sets[[gset]], length)
+	mask <- set_sizes >= GENE_SET_MIN_SIZE
+
+	gene_sets[[gset]] <- gene_sets[[gset]][mask]
+}
 ```
 

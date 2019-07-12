@@ -1,0 +1,148 @@
+### Functional Enrichment
+
+#### Commonly enriched pathways / gene sets (# datasets)
+
+```{r fgsea_results, message = FALSE, results = 'asis'}
+# load fgsea results
+fgsea_res_all <- bind_rows(lapply(Sys.glob('output/fgsea_results_*'), read_csv))
+
+fgsea_res_all$dataset <- str_split(fgsea_res_all$covariate, '_', simplify = TRUE)[, 1] 
+
+# number of datasets a pathway was found to be enriched for for at least one
+# covariate
+fgsea_res_datasets <- fgsea_res_all %>%
+  filter(padj < 0.05) %>%
+  group_by(dataset, gene_set, pathway) %>%
+  summarize(mean_padj = mean(padj), median_padj = median(padj)) %>%
+  group_by(gene_set, pathway) %>%
+  summarize(num_datasets = n(), mean_padj = mean(mean_padj), median_padj = median(median_padj)) %>%
+  arrange(desc(num_datasets))
+
+fgsea_res_datasets %>%
+  head(20) %>%
+  kable
+```
+
+#### Commonly enriched pathways / gene sets (# datasets/covariates)
+
+```{r results = 'asis'}
+# which pathways are enriched for the most datasets / covariates?
+fgsea_res_covariates <- fgsea_res_all %>%
+  filter(padj < 0.05) %>%
+  group_by(gene_set, pathway) %>%
+  summarize(num_enriched = n(), mean_padj = mean(padj), median_padj = median(padj)) %>%
+  arrange(desc(num_enriched))
+
+fgsea_res_covariates %>%
+  head(20) %>%
+  kable
+```
+
+#### Most significantly enriched pathways / genesets
+
+```{r, results = 'asis'}
+# which pathways have the most statistically significant enrichment?
+fgsea_res_covariates %>%
+  filter(num_enriched >= 3) %>%
+  arrange(median_padj) %>%
+  head(20) %>%
+  kable
+```
+
+#### Relationship between covariates and enrichment results
+
+```{r results = 'asis'}
+# number of enriched annotations for each covariate assessed
+fgsea_summary <- fgsea_res_all %>% 
+  filter(padj < 0.05) %>%
+  group_by(covariate) %>% 
+  summarize(num_enriched = n()) %>% 
+  arrange(desc(num_enriched))
+
+# statistics / p-values for associated with each fgsea result
+covariate_stats <- gene_weights[, fgsea_summary$covariate]
+
+fgsea_summary <- bind_cols(
+    fgsea_summary, 
+    median_stat = round(sapply(covariate_stats, median, na.rm = TRUE), 3),
+    mean_stat   = round(sapply(covariate_stats, mean, na.rm = TRUE), 3),
+    max_stat    = round(sapply(covariate_stats, max, na.rm = TRUE), 3))
+
+fgsea_summary$accession <- str_split(fgsea_summary$covariate, '_', simplify = TRUE)[, 1] 
+
+mdat <- datasets %>% 
+  filter(accession %in% fgsea_summary$accession) %>%
+  select(accession, num_samples, num_genes, year)
+
+fgsea_summary <- fgsea_summary %>%
+  inner_join(mdat, by = 'accession') %>%
+  select(-accession)
+
+fgsea_summary %>%
+  kable
+
+# correlation of enrichment with other dataset / covariate features
+kable(cor(fgsea_summary[, -1]), digits = 2)
+
+# covariates with no associated enrichment
+no_sig_results <- colnames(gene_weights)[!colnames(gene_weights) %in% fgsea_summary$covariate]
+no_sig_results <- no_sig_results[!grepl('gene_symbol|ensgene|_mean|_median|_sd|_mad|_kurtosis|_stat', no_sig_results)]
+
+no_sig_results
+```
+
+#### Most useful gene set collections
+
+```{r}
+fgsea_res_collections <- fgsea_res_all %>%
+  filter(padj < 0.05) %>%
+  group_by(gene_set) %>%
+  summarize(num_enriched = n(), mean_padj = mean(padj), median_padj = median(padj)) %>%
+  rename(collection = gene_set)
+
+# gene set stats
+gene_set_stats <- data.frame(collection = names(gene_sets), 
+                             num_gene_sets = as.numeric(unlist(lapply(gene_sets, length))))
+
+gene_set_stats$min_size <- unlist(lapply(gene_sets, function(x) { min(unlist(lapply(x, length))) }))
+gene_set_stats$max_size <- unlist(lapply(gene_sets, function(x) { max(unlist(lapply(x, length))) }))
+gene_set_stats$mean_size <- unlist(lapply(gene_sets, function(x) { mean(unlist(lapply(x, length))) }))
+gene_set_stats$median_size <- unlist(lapply(gene_sets, function(x) { median(unlist(lapply(x, length))) }))
+
+gene_set_stats <- gene_set_stats %>%
+  inner_join(fgsea_res_collections, by = 'collection') %>%
+  mutate(ratio_enriched = num_enriched / num_gene_sets) %>%
+  arrange(desc(ratio_enriched))
+
+gene_set_stats %>%
+  head(25) %>%
+  kable
+
+# is the ratio of enrichment correlated with any properties of the gene set collections?
+cor_mat <- gene_set_stats %>%
+  select(collection, num_gene_sets, min_size, max_size, mean_size, ratio_enriched) %>%
+  column_to_rownames('collection') %>%
+  cor 
+
+diag(cor_mat) <- 0
+
+#cor_mat
+#                num_gene_sets min_size max_size mean_size ratio_enriched
+# num_gene_sets         0.0000  -0.0833   0.6781   -0.0929        -0.1140
+# min_size             -0.0833   0.0000  -0.1100    0.6951         0.5800
+# max_size              0.6781  -0.1100   0.0000   -0.0444        -0.0639
+# mean_size            -0.0929   0.6951  -0.0444    0.0000         0.9171
+# ratio_enriched       -0.1140   0.5800  -0.0639    0.9171         0.0000
+
+# larger gene sets are more likely to be enriched..
+cor(gene_set_stats$mean_size, gene_set_stats$ratio_enriched)
+```
+
+```{r save_fgsea_summary_results}
+# save fgsea summary results
+write_csv(fgsea_res_all, 'output/fgsea_combined_results_all.csv')
+write_csv(fgsea_res_datasets, 'output/fgsea_combined_results_datasets.csv')
+write_csv(fgsea_res_covariates, 'output/fgsea_combined_results_covariates.csv')
+write_csv(fgsea_res_collections, 'output/fgsea_combined_results_collections.csv')
+write_csv(gene_set_stats, 'output/fgsea_combined_results_collections_stats.csv')
+```

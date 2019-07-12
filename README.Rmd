@@ -10,22 +10,40 @@ output:
 
 # TODO
 
+- Convert to Snakes/Snakemake pipeline!!
+    - can do piecemeal... 
+    - maybe only port later steps to Snakes and do the rest in Rmd (as-is) or Snakemake?
+    - more reproducible..
 - Generate "thumbnail" overview images of each dataset.
+    - Generate a single figure showing the same thumbnail plots for all datasets in
+      a grid; use same subset of genes present in all datasets / normalize and order
+      genes consistently.
+    - Also useful in a Shiny app.
+- Start thinking about / planning Shiny architecture, etc.
+    - What types of data tables would be most useful to have?
+    - Any computations (PCA, t-SNE, etc.) that should be pre-generated and cached?
+    - Comparison figures?
+    - Ask Bev/Tyler what kinds of queries they would like to make
 - Compute correlation of expression data (e.g. sample 1000 random
   genes and measure correlation of expr across datasets)
-- Annotate datasets?
-  - Are there any obvious factors that could explain why some datasets are more similar
-    to others?
-    - disease stage (MGUS vs. MM)
-    - cell line vs. patient
-    - dataset size
-    - response measure type
-    - platform
+- Dataset correlation heatmap
+  - Generate a correlation heatmap at the dataset level (vs. dataset/covariate heatmap
+    currently generated)
+    - Could perform on something like gene variance, since that is present in all
+      datasets.
+    - Otherwise, collapse covariate scores for each dataset, and use those.
+  - Annotate with all known metadata (including platform)
+  - Are there any obvious variables that relate to dataset similarity?
 - Visualize some examples at each step? (e.g. compare count distributions for a single
   gene with high dip test?)
 - For categorical covariates, use limma/deseq to perform differential expression
   for each pair of response levels and record gene statistics / enrichment; provides
   an alternative to the current logistic regression based approach.
+- Alternate versions of weights to generate:
+  - Stage-specific weights (newly diagnosed, relapsed)
+  - Treatment-specific covariates only
+  - Survival covariates only
+- Add Marbach et. al (2016) TF regulon gene sets
 
 # IDEAS
 
@@ -45,16 +63,17 @@ output:
 
 ```{r, message = FALSE}
 library(annotables)
+library(doParallel)
 library(DataExplorer)
 library(inspectdf)
 library(diptest)
 library(e1071)
+library(foreach)
 library(GSEABase)
 library(fgsea)
 library(heatmaply)
 library(knitr)
 library(NMF)
-library(parallel)
 library(survival)
 library(tidyverse)
 library(viridisLite)
@@ -73,6 +92,9 @@ opts_knit$set(verbose = TRUE)
 # maximum ratio of covariate variables to allow before exluding a gene
 # from the final score computation
 GENE_MAX_MISSING_COVARIATES <- 0.5
+
+# minimum number of genes required for gene set to be included in analysis
+GENE_SET_MIN_SIZE <- 5
 ```
 
 ## Methods
@@ -94,581 +116,19 @@ GENE_MAX_MISSING_COVARIATES <- 0.5
 
 ## Results
 
-### Dataset similarity
-
-#### By gene standard deviation
-
-```{r}
-sd_dat <- gene_weights %>%
-  select(matches('_sd$'))
-
-sd_cor_mat <- cor(sd_dat, use = 'pairwise.complete.obs')
-
-heatmaply(sd_cor_mat)
+```{r child='rmd/results_overview.Rmd'}
 ```
 
-##### By gene MAD
-
-```{r}
-mad_dat <- gene_weights %>%
-  select(matches('_mad$'))
-
-mad_cor_mat <- cor(mad_dat, use = 'pairwise.complete.obs')
-
-heatmaply(mad_cor_mat)
+```{r child='rmd/results_functional_enrichment.Rmd'}
 ```
 
-##### By gene dip statistic
-
-```{r}
-dip_dat <- gene_weights %>%
-  select(matches('_dip_stat$'))
-
-dip_cor_mat <- cor(dip_dat, use = 'pairwise.complete.obs')
-
-heatmaply(dip_cor_mat)
+```{r child='rmd/results_covariate_similarity.Rmd'}
 ```
 
-#### Missing data
-
-```{r, fig.height = 24, fig.width = 8}
-plot_missing(gene_weights, ggtheme = theme_bw_high_res())
+```{r child='rmd/results_gene_scores.Rmd'}
 ```
 
-#### Data distributions
-
-##### Standard Deviation
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_sd', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-upper_lim <- quantile(dat$statistic, 0.9)
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  facet_wrap(~dataset) +
-  xlim(0, upper_lim) +
-  ylim(0, 1) +
-  xlab("Standard Deviation (Clipped)") +
-  theme_bw_high_res()
-```
-
-##### Median Absolute Deviation
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_mad', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-upper_lim <- quantile(dat$statistic, 0.9)
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  facet_wrap(~dataset) +
-  xlim(0, upper_lim) +
-  ylim(0, 1) +
-  xlab("MAD (Clipped)") +
-  theme_bw_high_res()
-```
-
-##### Kurtosis
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_kurtosis', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-upper_lim <- quantile(dat$statistic, 0.8)
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  facet_wrap(~dataset) +
-  xlim(0, upper_lim) +
-  ylim(0, 0.5) +
-  xlab("Kurtosis (Clipped)") +
-  theme_bw_high_res()
-```
-
-##### Hartigan's Dip Test
-
-###### Dip Stat
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_dip_stat', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  facet_wrap(~dataset, scales = 'free') +
-  xlab("Dip Stat") +
-  theme_bw_high_res()
-```
-
-###### Dip P-value
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_dip_pval', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  facet_wrap(~dataset, scales = 'free') +
-  xlab("Dip P-value") +
-  theme_bw_high_res()
-```
-
-##### Multiple Myeloma Disease Stage
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_stage', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  xlim(0, 1) +
-  facet_wrap(~dataset, scales = 'free_y') +
-  xlab("R^2 (Disease Stage)") +
-  theme_bw_high_res()
-```
-
-##### Multiple Myeloma Status
-
-```{r fig.width = 3, fig.height = 3}
-ind <- grepl('_status', colnames(gene_weights))
-
-dat <- gene_weights[, ind, drop = FALSE] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  xlim(0, 1) +
-  xlab("R^2 (Disease Status)") +
-  theme_bw_high_res()
-```
-
-##### Multiple Myeloma Treatment Response
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_response', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  xlim(0, 1) +
-  facet_wrap(~dataset, scales = 'free_y') +
-  xlab("R^2 (Treatment Response)") +
-  theme_bw_high_res()
-```
-
-##### Multiple Myeloma Survival (Cox statistic)
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_cox_stat', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  xlim(0, 30) +
-  facet_wrap(~dataset, scales = 'free_y') +
-  xlab("Cox statistic (Clipped)") +
-  theme_bw_high_res()
-```
-
-##### Multiple Myeloma Survival (Cox P-value)
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_cox_pval', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  facet_wrap(~dataset, scales = 'free_y') +
-  xlab("Cox P-value") +
-  theme_bw_high_res()
-```
-
-### Functional Enrichment
-
-#### Commonly enriched pathways / gene sets (# datasets)
-
-```{r fgsea_results, message = FALSE, results = 'asis'}
-# load fgsea results
-fgsea_res_all <- bind_rows(lapply(Sys.glob('output/fgsea_results_*'), read_csv))
-
-fgsea_res_all$dataset <- str_split(fgsea_res_all$covariate, '_', simplify = TRUE)[, 1] 
-
-# number of datasets a pathway was found to be enriched for for at least one
-# covariate
-fgsea_res_datasets <- fgsea_res_all %>%
-  filter(padj < 0.05) %>%
-  group_by(dataset, gene_set, pathway) %>%
-  summarize(mean_padj = mean(padj), median_padj = median(padj)) %>%
-  group_by(gene_set, pathway) %>%
-  summarize(num_datasets = n(), mean_padj = mean(mean_padj), median_padj = median(median_padj)) %>%
-  arrange(desc(num_datasets))
-
-fgsea_res_datasets %>%
-  head(20) %>%
-  kable
-```
-
-#### Commonly enriched pathways / gene sets (# datasets/covariates)
-
-```{r results = 'asis'}
-# which pathways are enriched for the most datasets / covariates?
-fgsea_res_covariates <- fgsea_res_all %>%
-  filter(padj < 0.05) %>%
-  group_by(gene_set, pathway) %>%
-  summarize(num_enriched = n(), mean_padj = mean(padj), median_padj = median(padj)) %>%
-  arrange(desc(num_enriched))
-
-fgsea_res_covariates %>%
-  head(20) %>%
-  kable
-```
-
-#### Most significantly enriched pathways / genesets
-
-```{r, results = 'asis'}
-# which pathways have the most statistically significant enrichment?
-fgsea_res_covariates %>%
-  filter(num_enriched >= 3) %>%
-  arrange(median_padj) %>%
-  head(20) %>%
-  kable
-```
-
-#### Relationship between covariates and enrichment results
-
-```{r results = 'asis'}
-# number of enriched annotations for each covariate assessed
-fgsea_summary <- fgsea_res_all %>% 
-  filter(padj < 0.05) %>%
-  group_by(covariate) %>% 
-  summarize(num_enriched = n()) %>% 
-  arrange(desc(num_enriched))
-
-# statistics / p-values for associated with each fgsea result
-covariate_stats <- gene_weights[, fgsea_summary$covariate]
-
-fgsea_summary <- bind_cols(
-    fgsea_summary, 
-    median_stat = round(sapply(covariate_stats, median, na.rm = TRUE), 3),
-    mean_stat   = round(sapply(covariate_stats, mean, na.rm = TRUE), 3),
-    max_stat    = round(sapply(covariate_stats, max, na.rm = TRUE), 3))
-
-fgsea_summary$accession <- str_split(fgsea_summary$covariate, '_', simplify = TRUE)[, 1] 
-
-mdat <- datasets %>% 
-  filter(accession %in% fgsea_summary$accession) %>%
-  select(accession, num_samples, num_genes, year)
-
-fgsea_summary <- fgsea_summary %>%
-  inner_join(mdat, by = 'accession') %>%
-  select(-accession)
-
-fgsea_summary %>%
-  kable
-
-# correlation of enrichment with other dataset / covariate features
-kable(cor(fgsea_summary[, -1]), digits = 2)
-
-# covariates with no associated enrichment
-no_sig_results <- colnames(gene_weights)[!colnames(gene_weights) %in% fgsea_summary$covariate]
-no_sig_results <- no_sig_results[!grepl('gene_symbol|ensgene|_mean|_median|_sd|_mad|_kurtosis|_stat', no_sig_results)]
-
-no_sig_results
-```
-
-#### Most useful gene set collections
-
-```{r}
-fgsea_res_collections <- fgsea_res_all %>%
-  filter(padj < 0.05) %>%
-  group_by(gene_set) %>%
-  summarize(num_enriched = n(), mean_padj = mean(padj), median_padj = median(padj)) %>%
-  rename(collection = gene_set)
-
-# gene set stats
-gene_set_stats <- data.frame(collection = names(gene_sets), 
-                             num_gene_sets = as.numeric(unlist(lapply(gene_sets, length))))
-
-gene_set_stats$min_size <- unlist(lapply(gene_sets, function(x) { min(unlist(lapply(x, length))) }))
-gene_set_stats$max_size <- unlist(lapply(gene_sets, function(x) { max(unlist(lapply(x, length))) }))
-gene_set_stats$mean_size <- unlist(lapply(gene_sets, function(x) { mean(unlist(lapply(x, length))) }))
-gene_set_stats$median_size <- unlist(lapply(gene_sets, function(x) { median(unlist(lapply(x, length))) }))
-
-gene_set_stats <- gene_set_stats %>%
-  inner_join(fgsea_res_collections, by = 'collection') %>%
-  mutate(ratio_enriched = num_enriched / num_gene_sets) %>%
-  arrange(desc(ratio_enriched))
-
-gene_set_stats %>%
-  head(25) %>%
-  kable
-
-# is the ratio of enrichment correlated with any properties of the gene set collections?
-cor_mat <- gene_set_stats %>%
-  select(collection, num_gene_sets, min_size, max_size, mean_size, ratio_enriched) %>%
-  column_to_rownames('collection') %>%
-  cor 
-
-diag(cor_mat) <- 0
-
-#cor_mat
-#                num_gene_sets min_size max_size mean_size ratio_enriched
-# num_gene_sets         0.0000  -0.0833   0.6781   -0.0929        -0.1140
-# min_size             -0.0833   0.0000  -0.1100    0.6951         0.5800
-# max_size              0.6781  -0.1100   0.0000   -0.0444        -0.0639
-# mean_size            -0.0929   0.6951  -0.0444    0.0000         0.9171
-# ratio_enriched       -0.1140   0.5800  -0.0639    0.9171         0.0000
-
-# larger gene sets are more likely to be enriched..
-cor(gene_set_stats$mean_size, gene_set_stats$ratio_enriched)
-```
-
-```{r save_fgsea_summary_results}
-# save fgsea summary results
-write_csv(fgsea_res_all, 'output/fgsea_combined_results_all.csv')
-write_csv(fgsea_res_datasets, 'output/fgsea_combined_results_datasets.csv')
-write_csv(fgsea_res_covariates, 'output/fgsea_combined_results_covariates.csv')
-write_csv(fgsea_res_collections, 'output/fgsea_combined_results_collections.csv')
-write_csv(gene_set_stats, 'output/fgsea_combined_results_collections_stats.csv')
-```
-
-### Covariate similarity
-
-```{r}
-covariate_dat <- gene_weights %>%
-  select(-gene_symbol, -ensgene, 
-         -matches('_mean$'), -matches('_median$'), -matches('_sd$'),
-         -matches('_mad$'), -matches('_kurtosis$'),
-         -matches('_dip_stat$'), -matches('_pval$'))
-
-# use PFS > OS covariates (more informative)
-covariate_dat <- covariate_dat[, !grepl('os_cox', colnames(covariate_dat))]
-
-# for GSE24080, drop 'patient_died' field (similar to pfs_event)
-covariate_dat <- covariate_dat %>%
-  select(-GSE24080_patient_died)
-
-# number of missing entries for each gene
-gene_num_na <- apply(covariate_dat, 1, function(x) { sum(is.na(x)) })
-
-#table(gene_num_na)
-# gene_num_na
-#     0     1     2     3     4     5     6     7     8     9    10    11    12    13    14    15 
-#  5465   206   176  6250   571   672  2676   369   810   834   910   526   335  1604    38   168 
-#    16    17    18    19    20    21    22    23    24    25    26    27    28 
-#   106  1192    52     8    93   578   442   954 19075  1702 14054   977   632 
-
-max_na <- ceiling(GENE_MAX_MISSING_COVARIATES * ncol(covariate_dat))
-mask <- gene_num_na <= max_na
-
-#table(mask)
-# mask
-# FALSE  TRUE 
-# 41118 20357 
-covariate_dat <- covariate_dat[mask, ]
-
-# convert p-values to -log10(pvalue) scores so that directionality is the same for
-# all variables
-#covariate_dat <- covariate_dat %>%
-#  mutate_at(vars(matches("_pval_?\\d*$")), function (x) { -log10(x) }) %>%
-#  mutate_each(list(scale))
-
-# max-scale and shift to [0, 1]
-max_scale <- function(x) {
-  x <- x - min(x, na.rm = TRUE)
-  x / max(x, na.rm = TRUE)
-}
-covariate_dat <- sapply(covariate_dat, max_scale)
-rownames(covariate_dat) <- gene_weights$gene_symbol[mask]
-
-# how much each column contributes to the score..
-#range(colSums(covariate_dat, na.rm = TRUE))
-# [1]  335 4751
-
-# normalize across columns so that each covariate contributes equally
-covariate_dat <- sweep(covariate_dat, 2, colSums(covariate_dat, na.rm = TRUE), '/') * 1E6
-
-# covariate types
-covariate_fields <- data.frame(
-  contains = c('response', 'stage|status|ecog', 'subgroup', '_pfs_|_os_|_died'),
-  type     = c('Treatment Response', 'Disease Stage', 'Patient Subgroup', 'Survival')               
-)
-
-covariate_types <- rep('', ncol(covariate_dat))
-
-for (i in 1:nrow(covariate_fields)) {
-  covariate_types[grepl(covariate_fields$contains[i], 
-                        colnames(covariate_dat))] <- covariate_fields$type[i]
-}
-
-covariate_cor_mat <- round(cor(covariate_dat, use = 'pairwise.complete.obs'), 2)
-
-# set diagonal or correlation matrix to 0 to improve contrast
-diag(covariate_cor_mat) <- 0
-
-heatmaply(covariate_cor_mat, draw_cellnote = TRUE, cellnote_size = 8,
-          row_side_colors = data.frame(Covariate=covariate_types))
-
-# static version
-annotation = data.frame(Var1 = factor(1:p %% 2 == 0, labels = c("Class1", "Class2")), Var2 = 1:10)
-
-aheatmap(covariate_cor_mat, color = viridis(100), Colv = FALSE, labCol = '',
-         annRow = data.frame(Covariate=covariate_types), annColors = 'Dark2')
-```
-
-### Most informative genes
-
-#### All covariates (mean)
-
-```{r, fig.width = 6, fig.height = 6}
-ind <- match(rownames(covariate_dat), grch37$symbol)
-
-score_dat <- data.frame(
-  gene = rownames(covariate_dat),
-  type = grch37$biotype[ind],
-  description = grch37$description[ind],
-  mean_score = rowSums(covariate_dat, na.rm = TRUE),
-  median_score = apply(covariate_dat, 1, median, na.rm = TRUE)
-)
-
-score_dat %>% 
-  arrange(desc(mean_score)) %>%
-  head(20) %>%
-  kable
-```
-
-#### All covariates (median)
-
-```{r results = 'asis'}
-score_dat %>% 
-  arrange(desc(median_score)) %>%
-  head(20) %>%
-  kable
-```
-
-#### Treatment covariates (mean)
-
-```{r, fig.width = 6, fig.height = 6}
-dat <- covariate_dat[, grepl('_response$', colnames(covariate_dat))]
-
-ind <- match(rownames(dat), grch37$symbol)
-
-treatment_score_dat <- data.frame(
-  gene = rownames(dat),
-  type = grch37$biotype[ind],
-  description = grch37$description[ind],
-  mean_score = rowSums(dat, na.rm = TRUE),
-  median_score = apply(dat, 1, median, na.rm = TRUE)
-)
-
-treatment_score_dat %>% 
-  arrange(desc(mean_score)) %>%
-  head(20) %>%
-  kable
-```
-
-#### Treatment covariates (median)
-
-```{r results = 'asis'}
-treatment_score_dat %>% 
-  arrange(desc(median_score)) %>%
-  head(20) %>%
-  kable
-```
-
-#### Survival covariates (mean)
-
-```{r, fig.width = 6, fig.height = 6}
-dat <- covariate_dat[, grepl('_cox_|_died', colnames(covariate_dat))]
-
-ind <- match(rownames(dat), grch37$symbol)
-
-survival_score_dat <- data.frame(
-  gene = rownames(dat),
-  type = grch37$biotype[ind],
-  description = grch37$description[ind],
-  mean_score = rowSums(dat, na.rm = TRUE),
-  median_score = apply(dat, 1, median, na.rm = TRUE)
-)
-
-survival_score_dat %>% 
-  arrange(desc(mean_score)) %>%
-  head(20) %>%
-  kable
-```
-
-#### Survival covariates (median)
-
-```{r results = 'asis'}
-survival_score_dat %>% 
-  arrange(desc(median_score)) %>%
-  head(20) %>%
-  kable
-```
-
-```{r}
-stopCluster(cl)
-```
-
-#### Functional Enrichment (Covariate Scores)
-
-```{r fgsea, results = 'asis', warnings = FALSE}
-gene_stats <- setNames(score_dat$mean_score, score_dat$gene)
-
-res_all <- NULL
-
-for (gs in names(gene_sets)) {
-  set.seed(1)
-
-	res <- fgsea(gene_sets[[gs]], gene_stats, nperm = 15000, nproc = MAX_THREADS) %>%
-		select(-leadingEdge) %>%
-		arrange(padj)
-
-  res_all <- rbind(res_all, res)
-
-  res_sig <- res %>%
-    filter(padj < 0.05)
-
-	if (nrow(res_sig) > 0) {
-    cat(sprintf("\n##### %s (n = %d)\n", gs, nrow(res_sig)))
-	  print(kable(head(res_sig, 20)))
-	}
-}
-
-cat(sprintf("##### Total: %d", nrow(res_all %>% filter(padj < 0.05))))
-
-write_csv(res_all, 'output/fgsea_covariate_score_results_all.csv')
+```{r child='rmd/results_gene_set_scores.Rmd'}
 ```
 
 ```{r}

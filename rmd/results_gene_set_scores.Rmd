@@ -1,0 +1,129 @@
+### Most informative gene sets
+
+#### All covariates (mean)
+
+```{r, fig.width = 6, fig.height = 6}
+ind <- match(rownames(covariate_dat), grch37$symbol)
+
+gene_scores <- data.frame(
+  gene = rownames(covariate_dat),
+  type = grch37$biotype[ind],
+  description = grch37$description[ind],
+  mean_score = rowSums(covariate_dat, na.rm = TRUE),
+  median_score = apply(covariate_dat, 1, median, na.rm = TRUE)
+)
+
+gene_scores <- gene_scores %>%
+  arrange(desc(median_score))
+
+# store gene scores
+write_csv(gene_scores, file.path(output_dir, 'final_weights_genes.csv'))
+
+gene_scores %>% 
+  arrange(desc(mean_score)) %>%
+  head(20) %>%
+  kable
+```
+
+#### All covariates (median)
+
+```{r results = 'asis'}
+gene_scores %>% 
+  arrange(desc(median_score)) %>%
+  head(20) %>%
+  kable
+```
+
+#### Treatment covariates (mean)
+
+```{r, fig.width = 6, fig.height = 6}
+dat <- covariate_dat[, grepl('_response$', colnames(covariate_dat))]
+
+ind <- match(rownames(dat), grch37$symbol)
+
+treatment_gene_scores <- data.frame(
+  gene = rownames(dat),
+  type = grch37$biotype[ind],
+  description = grch37$description[ind],
+  mean_score = rowSums(dat, na.rm = TRUE),
+  median_score = apply(dat, 1, median, na.rm = TRUE)
+)
+
+treatment_gene_scores %>% 
+  arrange(desc(mean_score)) %>%
+  head(20) %>%
+  kable
+```
+
+#### Treatment covariates (median)
+
+```{r results = 'asis'}
+treatment_gene_scores %>% 
+  arrange(desc(median_score)) %>%
+  head(20) %>%
+  kable
+```
+
+#### Survival covariates (mean)
+
+```{r, fig.width = 6, fig.height = 6}
+dat <- covariate_dat[, grepl('_cox_|_died', colnames(covariate_dat))]
+
+ind <- match(rownames(dat), grch37$symbol)
+
+survival_gene_scores <- data.frame(
+  gene = rownames(dat),
+  type = grch37$biotype[ind],
+  description = grch37$description[ind],
+  mean_score = rowSums(dat, na.rm = TRUE),
+  median_score = apply(dat, 1, median, na.rm = TRUE)
+)
+
+survival_gene_scores %>% 
+  arrange(desc(mean_score)) %>%
+  head(20) %>%
+  kable
+```
+
+#### Survival covariates (median)
+
+```{r results = 'asis'}
+survival_gene_scores %>% 
+  arrange(desc(median_score)) %>%
+  head(20) %>%
+  kable
+```
+
+```{r}
+stopCluster(cl)
+```
+
+#### Functional Enrichment (Gene Scores)
+
+```{r fgsea, results = 'asis', warnings = FALSE}
+gene_stats <- setNames(gene_scores$mean_score, gene_scores$gene)
+
+res_all <- NULL
+
+for (gs in names(gene_sets)) {
+  set.seed(1)
+
+	res <- fgsea(gene_sets[[gs]], gene_stats, nperm = 15000, nproc = MAX_THREADS) %>%
+		select(-leadingEdge) %>%
+		arrange(padj)
+
+  res_all <- rbind(res_all, res)
+
+  res_sig <- res %>%
+    filter(padj < 0.05)
+
+	if (nrow(res_sig) > 0) {
+    cat(sprintf("\n##### %s (n = %d)\n", gs, nrow(res_sig)))
+	  print(kable(head(res_sig, 20)))
+	}
+}
+
+cat(sprintf("##### Total: %d", nrow(res_all %>% filter(padj < 0.05))))
+
+write_csv(res_all, 'output/fgsea_covariate_score_results_all.csv')
+```
