@@ -1,3 +1,5 @@
+## Create gene 
+
 ```{r load_gene_weight_results, message = FALSE}
 # create variables to store result matrices
 gene_weights <- NULL
@@ -18,10 +20,6 @@ for (dataset in weight_files) {
   if (is.null(gene_weights)) {
     gene_weights <- dat
   } else {
-    if ('ensgene' %in% colnames(gene_weights) && 'ensgene' %in% colnames(dat)) {
-      dat <- dat %>%
-        select(-ensgene)
-    }
     gene_weights <- gene_weights %>%
       full_join(dat, by = 'gene_symbol')
   }
@@ -48,22 +46,18 @@ gene_stats <- gene_weights %>%
 	select(-matches('_pval$')) %>%
 	group_by(gene_symbol) %>%
 	summarize_all(max) %>%
-	ungroup
+	ungroup %>%
+  select(gene_symbol, everything())
 
 gene_pvals <- gene_weights %>%
 	select(gene_symbol, matches('_pval$')) %>%
 	group_by(gene_symbol) %>%
 	summarize_all(min) %>%
 	ungroup %>%
-	select(-gene_symbol)
-
-gene_weights <- cbind(gene_stats, gene_pvals)
-
-# reorder columns
-id_cols <- c('gene_symbol', 'ensgene')
-gene_weights <- gene_weights[, c(id_cols, colnames(gene_weights)[!colnames(gene_weights) %in% id_cols])]
+  select(gene_symbol, everything())
 
 # save combined gene weight data
-write_csv(gene_weights, file.path(output_dir, 'combined_gene_weights.csv'))
+write_csv(gene_stats, file.path(output_dir, 'combined_gene_stats.csv'))
+write_csv(gene_pvals, file.path(output_dir, 'combined_gene_pvals.csv'))
 ```
 

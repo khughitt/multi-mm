@@ -8,84 +8,30 @@ output:
     number_sections: true
 ---
 
-# TODO
+<!--
 
-- Convert to Snakes/Snakemake pipeline!!
-    - can do piecemeal... 
-    - maybe only port later steps to Snakes and do the rest in Rmd (as-is) or Snakemake?
-    - more reproducible..
-- Generate "thumbnail" overview images of each dataset.
-    - Generate a single figure showing the same thumbnail plots for all datasets in
-      a grid; use same subset of genes present in all datasets / normalize and order
-      genes consistently.
-    - Also useful in a Shiny app.
-- Start thinking about / planning Shiny architecture, etc.
-    - What types of data tables would be most useful to have?
-    - Any computations (PCA, t-SNE, etc.) that should be pre-generated and cached?
-    - Comparison figures?
-    - Ask Bev/Tyler what kinds of queries they would like to make
-- Compute correlation of expression data (e.g. sample 1000 random
-  genes and measure correlation of expr across datasets)
-- Dataset correlation heatmap
-  - Generate a correlation heatmap at the dataset level (vs. dataset/covariate heatmap
-    currently generated)
-    - Could perform on something like gene variance, since that is present in all
-      datasets.
-    - Otherwise, collapse covariate scores for each dataset, and use those.
-  - Annotate with all known metadata (including platform)
-  - Are there any obvious variables that relate to dataset similarity?
-- Visualize some examples at each step? (e.g. compare count distributions for a single
-  gene with high dip test?)
-- For categorical covariates, use limma/deseq to perform differential expression
-  for each pair of response levels and record gene statistics / enrichment; provides
-  an alternative to the current logistic regression based approach.
-- Alternate versions of weights to generate:
-  - Stage-specific weights (newly diagnosed, relapsed)
-  - Treatment-specific covariates only
-  - Survival covariates only
-- Add Marbach et. al (2016) TF regulon gene sets
+TODO July 15, 2019:
 
-# IDEAS
+- do a quick test in dev/ to compare effect of using test statistics vs. p-values:
+  - compute scores using each and measure enrichment with fgsea
+  - if p-values work as well / better, than we can stop storing test statistic?
+- for each dataset, split weights matrix up into:
 
-1. For final gene weights, use mostly survival, etc. R^2's since these are likely to be
-   the genes that are particularly important for MM.
-2. For sd, etc. could try downloading a large number of "normal" (non-MM /
-   non-cancer) samples and measure the same statistics. Then look for genes which have
-   the highest sd in the MM samples, relative to healthy ones?
-3. Use RCellMiner, etc. to select drugs with various mechanisms and generate
-   gene weights targetted at each different type of drug mechanism?
-   
-**Related work:**
+  1. gene statistics (mean, median, sd, etc.)
+  2. gene p-values
+  3. gene test statistics
 
-1. [Botta et al. (2016)](https://www.nature.com/articles/bcj2016118) - Combines data
-   from 5 different MM experiments (table S1) to determine a survival-specific gene signature.
-   - focussed on inflammation-related gene subset.
+- Note: not all variables have associated p-values (some are R^2)
+  - for individual datasets, store raw p-values, test stats, r^2
+  - when combining below, drop the test stats and do:
+      weights = [pvals, r^2 vals]
+  - normalize to allow comparison..
 
-```{r, message = FALSE}
-library(annotables)
-library(doParallel)
-library(DataExplorer)
-library(inspectdf)
-library(diptest)
-library(e1071)
-library(foreach)
-library(GSEABase)
-library(fgsea)
-library(heatmaply)
-library(knitr)
-library(NMF)
-library(survival)
-library(tidyverse)
-library(viridisLite)
-```
+-->
+
+# Setup
 
 ```{r child='rmd/setup.Rmd'}
-```
-
-```{r rmarkdown_settings, include = FALSE}
-# stop on encountered an error in a child rmd file
-opts_chunk$set(error = FALSE)
-opts_knit$set(verbose = TRUE)
 ```
 
 ```{r settings}
@@ -97,10 +43,20 @@ GENE_MAX_MISSING_COVARIATES <- 0.5
 GENE_SET_MIN_SIZE <- 5
 ```
 
-## Methods
+```{r rmarkdown_settings, include = FALSE}
+# stop on encountered an error in a child rmd file
+opts_chunk$set(error = FALSE)
+opts_knit$set(verbose = TRUE)
+```
+
+# Overview
+
+Summary of datasets included in this analysis:
 
 ```{r child='rmd/dataset_summary.Rmd'}
 ```
+
+# Methods
 
 ```{r child='rmd/load_gene_sets.Rmd'}
 ```
@@ -111,12 +67,18 @@ GENE_SET_MIN_SIZE <- 5
 ```{r child='rmd/load_mmrf.Rmd'}
 ```
 
-```{r child='rmd/load_gene_weights.Rmd'}
+```{r child='rmd/combine_gene_weights.Rmd'}
 ```
 
-## Results
+```{r child='rmd/combine_pathway_weights.Rmd'}
+```
+
+# Results
 
 ```{r child='rmd/results_overview.Rmd'}
+```
+
+```{r child='rmd/results_dataset_similarity.Rmd'}
 ```
 
 ```{r child='rmd/results_functional_enrichment.Rmd'}
@@ -131,7 +93,17 @@ GENE_SET_MIN_SIZE <- 5
 ```{r child='rmd/results_gene_set_scores.Rmd'}
 ```
 
-```{r}
+# System information
+
+```{r, collapse=FALSE}
 sessionInfo()
+```
+
+```{r git_commit}
+system('git rev-parse --short HEAD', intern = TRUE)
+```
+
+```{r save_html, include=FALSE}
+system(sprintf('(sleep 15 && cp README.html %s) &', output_dir))
 ```
 

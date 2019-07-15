@@ -1,4 +1,4 @@
-### GEO
+## Load GEO Data
 
 ```{r parse_geo_datasets, message = FALSE, warning = FALSE}
 #

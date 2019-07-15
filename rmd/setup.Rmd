@@ -1,3 +1,21 @@
+```{r load_libraries, message = FALSE}
+library(annotables)
+library(doParallel)
+library(DataExplorer)
+library(inspectdf)
+library(diptest)
+library(e1071)
+library(foreach)
+library(GSEABase)
+library(fgsea)
+library(heatmaply)
+library(knitr)
+library(NMF)
+library(survival)
+library(tidyverse)
+library(viridisLite)
+```
+
 ```{r shared_setup}
 # general options
 options(stringsAsFactors = FALSE)
@@ -16,16 +34,18 @@ opts_chunk$set(
 # make reproducible
 set.seed(1)
 
+# analysis version
+VERSION <- '2019-07-15'
+
 # base and data directories
 public_data_dir <- '/data/public/human'
 
 base_dir   <- normalizePath(file.path(getwd(), '..'))
 input_dir  <- file.path(base_dir, 'input')
-output_dir <- file.path(base_dir, 'output')
 geo_dir    <- file.path(public_data_dir, 'geo')
 mmrf_dir   <- file.path(public_data_dir, 'mmrf_commpass/IA13')
 
-output_dir <- file.path(base_dir, 'output')
+output_dir <- file.path(base_dir, 'output', VERSION)
 
 if (!dir.exists(output_dir)) {
   dir.create(output_dir, mode = '0755')
@@ -44,7 +64,7 @@ theme_bw_high_res <- function (base_size = 11, base_line_size = 0.5) {
 }
 
 # maximum number of threads to use for parallel processes
-MAX_THREADS <- 4
+MAX_THREADS <- 16
 MAX_THREADS <- max(1, min(detectCores() - 2, MAX_THREADS, na.rm=TRUE))
 
 # create paralellization handler

@@ -1,7 +1,9 @@
+## Load gene sets
+
 ```{r load_gene_sets}
 annot_dir <- '/data/annotations'
 
-bader_files   <- Sys.glob(file.path(annot_dir, 'bader_gene_sets', '*_symbol.gmt')) 
+bader_files   <- Sys.glob(file.path(annot_dir, 'bader_gene_sets', 'Human_DrugBank_all_symbol.gmt')) 
 dsigdb_files  <- file.path(annot_dir, 'dsigdb', '1.0', 'DSigDB_All.gmt')
 enrichr_files <- Sys.glob(file.path(annot_dir, 'enrichr', '*.txt'))
 gdsc_files    <- Sys.glob(file.path(annot_dir, 'gdsc_drug_modules', '*-nr.gmt'))

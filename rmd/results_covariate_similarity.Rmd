@@ -2,7 +2,7 @@
 
 ```{r}
 covariate_dat <- gene_weights %>%
-  select(-gene_symbol, -ensgene, 
+  select(-gene_symbol,
          -matches('_mean$'), -matches('_median$'), -matches('_sd$'),
          -matches('_mad$'), -matches('_kurtosis$'),
          -matches('_dip_stat$'), -matches('_pval$'))
@@ -38,6 +38,15 @@ covariate_dat <- covariate_dat[mask, ]
 #covariate_dat <- covariate_dat %>%
 #  mutate_at(vars(matches("_pval_?\\d*$")), function (x) { -log10(x) }) %>%
 #  mutate_each(list(scale))
+
+# TODO: use p-values instead of test statistics -- more consistent / significance
+# matters more than effect size.
+# TODO: limit to genes with at least N significant values...
+
+# drop any genes that aren't in the top 1000 highest values for at least one of the
+# covariates
+
+
 
 # max-scale and shift to [0, 1]
 max_scale <- function(x) {
