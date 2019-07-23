@@ -40,9 +40,9 @@ for (cname in colnames(pData(eset))) {
   }
 }
 
-# GSE24080 has *not* been adjusted for sample size..
+# GSE26760 has *not* been adjusted for sample size..
 #range(colSums(exprs(eset)))
-# [1] 367378.3 466299.2
+# [1] 6683420 9798074
 
 # perform size-factor normalization
 exprs(eset) <- sweep(exprs(eset), 2, colSums(exprs(eset)), '/') * 1E6
@@ -51,7 +51,7 @@ exprs(eset) <- sweep(exprs(eset), 2, colSums(exprs(eset)), '/') * 1E6
 eset <- eset[!startsWith(rownames(eset), 'AFFX-'), ]
 
 # exclude any probes with zero variance (uninformative)
-eset <- eset[apply(exprs(eset), 1, var, na.rm = TRUE) > 0, ]
+#eset <- eset[apply(exprs(eset), 1, var, na.rm = TRUE) > 0, ]
 
 # "Sample from patient MMRC0091" -> "MMRC0091"
 patient_ids <- str_split(pData(eset)$source_name_ch1, ' ', simplify = TRUE)[, 4]
@@ -74,15 +74,14 @@ sample_metadata <- sample_metadata %>%
 	inner_join(mdat, by = 'patient_id') %>%
 	filter(mm_stage != 'Unknown')
 
+sample_metadata$mm_stage[grepl('Multiple Myeloma', sample_metadata$mm_stage)] <- 'MM'
+sample_metadata$mm_stage[grepl('Leukemia', sample_metadata$mm_stage)] <- 'PCL'
 sample_metadata$mm_stage[sample_metadata$mm_stage == 'Smoldering Myeloma'] <- 'SMM'
-
 
 table(sample_metadata$mm_stage)
 # 
-#                         MGUS             Multiple Myeloma Primary Plasma Cell Leukemia 
-#                            2                          224                            3 
-#                          SMM                      Unknown 
-#                           10                            1 
+# MGUS   MM  PCL  SMM 
+#    2  224    3   10 
 # 
 
 # get gene symbols

@@ -56,7 +56,7 @@ sample_metadata <- pData(eset) %>%
 sample_metadata$disease = 'Multiple Myeloma'
 sample_metadata$cell_type = 'BM-CD138+'
 
-# get gene symbols associated with each probe; gene symbols are stored at ever
+# get gene symbols associated with each probe; gene symbols are stored at every
 # [(N-1) + 2]th position (i.e. 2, 7, 12, 17..)
 gene_parts <- str_split(fData(eset)$gene_assignment, '//', simplify=TRUE)
 gene_symbols <- gene_parts[, seq(2, ncol(gene_parts), by = 5)]
