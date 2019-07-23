@@ -24,9 +24,7 @@ for (dir_ in c(raw_data_dir, clean_data_dir)) {
   }
 }
 
-# download GEO data;
-# for GSE6691, data includes two separate esets with a small number of overlapping
-# probes
+# download GEO data
 eset <- getGEO(accession, destdir = raw_data_dir)[[1]]
 
 # report data processing used
@@ -46,31 +44,69 @@ for (cname in colnames(pData(eset))) {
   }
 }
 
+# columns to include (GSE6699)
+sample_metadata <- pData(eset) %>%
+  select(geo_accession, platform_id)
+
+# add cell type and disease 
+sample_metadata$cell_type = NA
+
+#table(pData(eset)$characteristics_ch1)
+# 
+#                                                                                         BL from CLL patient, isolated using CD19-PE and CD5-APC 
+#                                                                                                                                               2 
+#                                                                                        BL from CLL patient, isolated using CD19-PE and CD5-APC. 
+#                                                                                                                                               9 
+#                                                                                             BL from healthy donors, isolated using CD19-PE-Cy7. 
+#                                                                                                                                               8 
+# BL from WM patient, isolated using Kappa or Lambda-fluorescein isothiocyanate, CD10-PE, CD38-PerCPCy5.5,CD19-PE-Cy7, CD34-APC and CD45-APC-Cy7. 
+#                                                                                                                                               9 
+#    from WM patient, isolated using Kappa or Lambda-fluorescein isothiocyanate, CD10-PE, CD38-PerCPCy5.5,CD19-PE-Cy7, CD34-APC and CD45-APC-Cy7. 
+#                                                                                                                                               1 
+#                                                                                                PC from healthy donors, isolated using CD38-APC. 
+#                                                                                                                                               5 
+#                                                                                                     PC from MM patient, isolated using CD38-APC 
+#                                                                                                                                               2 
+#                                                                                                    PC from MM patient, isolated using CD38-APC. 
+#                                                                                                                                               9 
+#                                                                                                     PC from MM patient,isolated using CD38-APC. 
+#                                                                                                                                               1 
+# PC from WM patient, isolated using Kappa or Lambda-fluorescein isothiocyanate, CD10-PE, CD38-PerCPCy5.5,CD19-PE-Cy7, CD34-APC and CD45-APC-Cy7. 
+#                                                                                                                                               9 
+#  PC from WM patient, isolated using Kappa or Lambda-fluorescein isothiocyanate, CD10-PE,CD38-PerCPCy5.5,CD19-PE-Cy7, CD34-APC and CD45-APC-Cy7. 
+#                                                                                                                                               1 
+desc <- pData(eset)$characteristics_ch1
+
+disease <- rep('Multiple Myeloma', length(desc))
+disease[grepl('healthy', desc)] <- "Healthy"
+disease[grepl('WM', desc)] <- "Waldenström's Macroglobulinemia"
+disease[grepl('CLL', desc)] <- "Chronic Lymphocytic Leukemia"
+
+#table(disease)
+# disease
+#    Chronic Lymphocytic Leukemia                         Healthy                Multiple Myeloma 
+#                              11                              13                              12 
+# Waldenström's Macroglobulinemia 
+#                              20 
+sample_metadata$disease <- disease
+sample_metadata$mm_stage <- disease
+
+#range(colSums(exprs(eset)))
+# [1] 114848.0 117291.8
+
 # perform size-factor normalization
 exprs(eset) <- sweep(exprs(eset), 2, colSums(exprs(eset)), '/') * 1E6
 
 # exclude control sequences present in some datasets
 eset <- eset[!startsWith(rownames(eset), 'AFFX-'), ]
 
-# columns to include (GSE6699)
-# note: Healthy cells are from peripheral blood; all others are from bone marrow
-sample_metadata <- pData(eset) %>%
-  select(geo_accession, platform_id, 
-         disease_raw = characteristics_ch1)
+# keep only healthy / myeloma samples
+mask <- sample_metadata$disease %in% c('Healthy', 'Multiple Myeloma')
 
-sample_metadata$disease <- 'Healthy'
-sample_metadata$disease[grepl('CLL', sample_metadata$disease_raw)] <- 'CLL'
-sample_metadata$disease[grepl('MM', sample_metadata$disease_raw)] <- 'Multiple Myeloma'
-sample_metadata$disease[grepl('WM', sample_metadata$disease_raw)] <- "Waldenstrom's macroglobulinemia"
-
-sample_metadata <- sample_metadata %>%
-  select(-disease_raw)
-
-# add cell type and disease 
-sample_metadata$cell_type = NA
-
-# drop CLL samples (too different from MM)
-mask <- sample_metadata$disease != 'CLL'
+#table(mask)
+# mask
+# FALSE  TRUE 
+#    31    25 
 
 eset <- eset[, mask]
 sample_metadata <- sample_metadata[mask, ]
@@ -84,7 +120,7 @@ expr_dat <- exprs(eset) %>%
   rownames_to_column('probe_id') %>%
   add_column(gene_symbol = gene_symbols, .after = 1)
 
-#table(expr_dat$gene_symbol == '')
+table(expr_dat$gene_symbol == '')
 # 
 # FALSE  TRUE 
 # 20599  1000 
