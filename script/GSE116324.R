@@ -108,12 +108,12 @@ expr_dat <- expr %>%
   add_column(gene_symbol = gene_symbols, .after = 1)
 
 # determine filenames to use for outputs and save to disk
-expr_outfile <- sprintf('%s_expr.csv', accession)
-sample_outfile <- sprintf('%s_sample_metadata.csv', accession)
+expr_outfile <- sprintf('%s_gene_expr.csv', accession)
+mdat_outfile <- sprintf('%s_sample_metadata.csv', accession)
 
 # store cleaned expression data and metadata
 write_csv(expr_dat, file.path(clean_data_dir, expr_outfile))
-write_csv(sample_metadata, file.path(clean_data_dir, sample_outfile))
+write_csv(sample_metadata, file.path(clean_data_dir, mdat_outfile))
 
 sessionInfo()
 

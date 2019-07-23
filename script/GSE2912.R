@@ -76,8 +76,10 @@ expr_dat <- exprs(eset) %>%
   add_column(gene_symbol = fData(eset)$`Gene symbol`, .after = 1)
 
 # store cleaned expression data and metadata
-write_csv(expr_dat, file.path(clean_data_dir, sprintf('%s_expr.csv', accession)))
-write_csv(sample_metadata, 
-          file.path(clean_data_dir, sprintf('%s_sample_metadata.csv', accession)))
+expr_outfile <- file.path(clean_data_dir, sprintf('%s_gene_expr.csv', accession))
+mdat_outfile <- file.path(clean_data_dir, sprintf('%s_sample_metadata.csv', accession))
+  
+write_csv(expr_dat, expr_outfile)
+write_csv(sample_metadata, mdat_outfile)
 
 sessionInfo()
