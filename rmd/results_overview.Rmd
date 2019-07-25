@@ -2,20 +2,20 @@
 
 Combined datasets constructed:
 
-- **gene statistics** - Median, Mean, MAD, SD, kurtosis, DIP test for each dataset.
+- **gene statistics** - Median, Mean, MAD, SD, Variance, Kurtosis, DIP test for each dataset.
 - **gene weights** - Gene covariate weights
 
 ### Gene weights
 
 ```{r, results = 'asis'}
-cat(sprintf("- Num. genes: %d\n", nrow(gene_pvals)))
-cat(sprintf("- Num. variables: %d\n", ncol(gene_pvals)))
+cat(sprintf("- Num. genes: %d\n", nrow(gene_weights)))
+cat(sprintf("- Num. variables: %d\n", ncol(gene_weights) - 1))
 ```
 
 ### Pathway weights
 
 ```{r, results = 'asis'}
-cat(sprintf("- Num. pathways: %d\n", nrow(pathway_pvals)))
-cat(sprintf("- Num. variables: %d\n", ncol(pathway_pvals)))
+cat(sprintf("- Num. pathways: %d\n", nrow(pathway_weights)))
+cat(sprintf("- Num. variables: %d\n", ncol(pathway_weights) - 1))
 ```
 

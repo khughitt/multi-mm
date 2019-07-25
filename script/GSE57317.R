@@ -1,5 +1,4 @@
 #!/bin/env/Rscript
-#
 library(GEOquery)
 library(tidyverse)
 
@@ -49,10 +48,6 @@ exprs(eset) <- sweep(exprs(eset), 2, colSums(exprs(eset)), '/') * 1E6
 # exclude control sequences present in some datasets
 eset <- eset[!startsWith(rownames(eset), 'AFFX-'), ]
 
-# exclude any probes with zero variance (uninformative)
-eset <- eset[apply(exprs(eset), 1, var, na.rm = TRUE) > 0, ]
-
-
 # columns to include (GSE57317)
 sample_metadata <- pData(eset) %>%
   select(geo_accession, platform_id, 
@@ -91,4 +86,3 @@ write_csv(expr_dat, file.path(clean_data_dir, expr_outfile))
 write_csv(sample_metadata, file.path(clean_data_dir, mdat_outfile))
 
 sessionInfo()
-

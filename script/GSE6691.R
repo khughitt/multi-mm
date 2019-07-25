@@ -27,6 +27,14 @@ for (dir_ in c(raw_data_dir, clean_data_dir)) {
 # download GEO data
 eset <- getGEO(accession, destdir = raw_data_dir)[[1]]
 
+#head(colnames(eset))
+# [1] "5.82592"  "6.799907" "5.388776" "6.630125" "7.093243" "6.426071"
+
+# NOTE: GEOquery currently incorrectly parses the data for this experiment, skipping
+# >500 lines and usign the wrong colnames; reported the issue upstream. For now, just
+# fixing colnames..
+colnames(eset) <- pData(eset)$geo_accession
+
 # report data processing used
 print(as.character(pData(eset)$data_processing[1]))
 

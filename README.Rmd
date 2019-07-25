@@ -10,37 +10,43 @@ output:
 
 <!--
 
-TODO July 15, 2019:
+TODO: July 24, 2019
 
-- do a quick test in dev/ to compare effect of using test statistics vs. p-values:
-  - compute scores using each and measure enrichment with fgsea
-  - if p-values work as well / better, than we can stop storing test statistic?
-- for each dataset, split weights matrix up into:
+- Add <collection> prefix to gene set entries to account for keys (e.g. drug names)
+   that appear in multiple collections
 
-  1. gene statistics (mean, median, sd, etc.)
-  2. gene p-values
-  3. gene test statistics
+TODO: July 23, 2019
 
-- Note: not all variables have associated p-values (some are R^2)
-  - for individual datasets, store raw p-values, test stats, r^2
-  - when combining below, drop the test stats and do:
-      weights = [pvals, r^2 vals]
-  - normalize to allow comparison..
-
+- Dataset thumbnails
+  - Using an even smaller subset of genes
+  - Build mini heatmaps for each dataset, with genes / order fixed.
 -->
 
 # Setup
 
-```{r child='rmd/setup.Rmd'}
-```
-
 ```{r settings}
+# analysis version
+VERSION <- '2019-07-22'
+
 # maximum ratio of covariate variables to allow before exluding a gene
 # from the final score computation
 GENE_MAX_MISSING_COVARIATES <- 0.5
 
 # minimum number of genes required for gene set to be included in analysis
 GENE_SET_MIN_SIZE <- 5
+
+# function to use when aggregating data along pathways
+PATHWAY_AGG_FUNC <- 'mean'
+
+# maximum number of threads to use
+MAX_THREADS <- 14
+
+# fgsea parameters
+FGSEA_NPERM <- 15000
+FGSEA_NPROC <- 2
+```
+
+```{r child='rmd/setup.Rmd'}
 ```
 
 ```{r rmarkdown_settings, include = FALSE}

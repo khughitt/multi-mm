@@ -15,6 +15,9 @@ gene_sets <- lapply(gene_set_files, function(x) { geneIds(getGmt(x)) })
 
 names(gene_sets) <- tools::file_path_sans_ext(basename(gene_set_files)) 
 
+# remove gene set :length suffixes, if present
+names(gene_sets) <- sub(':\\d+$', '', names(gene_sets)) 
+
 # remove gene set weights, if present
 # e.g. "ANXA1,1.0" -> "ANXA1"
 for (gset in names(gene_sets)) {

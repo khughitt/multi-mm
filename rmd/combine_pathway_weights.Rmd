@@ -1,53 +1,70 @@
+## Combine pathway weights
+
 ```{r load_pathway_weight_results, message = FALSE}
-# create variables to store result matrices
-pathway_weights <- NULL
+pathway_weights_file <- file.path(combined_dir, 'combined_pathway_weights.csv')
+pathway_stats_file <- file.path(combined_dir, 'combined_pathway_stats.csv')
 
-# get a list of dataset accessions
-weight_files <- Sys.glob(file.path(output_dir, '*_pathway_weights.csv'))
-weight_files <- weight_files[!grepl('combined', weight_files)]
+if (!file.exists(pathway_weights_file) || !file.exists(pathway_stats_file)) {
+  # create variables to store result matrices
+  pathway_weights <- NULL
 
-dataset_accessions <- str_match(weight_files, 'output/(.*)_pathway_weights.csv')[, 2]
-dataset_accessions <- dataset_accessions[dataset_accessions != 'combined']
+  # individual dataset rsquares / p-values
+  pathway_rsq_files <- Sys.glob(file.path(output_dir, '*_pathway_rsqs.csv'))
+  pathway_pval_files <- Sys.glob(file.path(output_dir, '*_pathway_pvals.csv'))
 
-# load GEO, etc. datasets
-for (dataset in weight_files) {
-  # load dataset pathway weights
-  dat <- read_csv(dataset)
+  #accessions <- basename(str_match(pathway_rsq_files, '/(.*)_pathway_rsqs.csv')[, 2])
 
-  # note: duplicates appear to be due to redundant DrugBank gene sets from being
-  # added; fixed upstream. For now, removing duplicates as a work-around
-  # july 12, 2019
-  dat <- dat[!duplicated(dat$gene_set), ]
+  # load GEO and MMRF. datasets
+  for (infile in pathway_rsq_files) {
+    # load pathway expression data
+    dat <- read_csv(infile, col_types = cols())
 
-  # add to combined dataset
-  if (is.null(pathway_weights)) {
-    pathway_weights <- dat
-  } else {
-    pathway_weights <- pathway_weights %>%
-      full_join(dat, by = 'gene_set')
+    # add to combined dataset
+    if (is.null(pathway_weights)) {
+      pathway_weights <- dat
+    } else {
+      pathway_weights <- pathway_weights %>%
+        full_join(dat, by = 'gene_set')
+    }
   }
+
+  for (infile in pathway_pval_files) {
+    # load pathway expression data
+    dat <- read_csv(infile, col_types = cols())
+
+    # add to combined dataset
+    if (is.null(pathway_weights)) {
+      pathway_weights <- dat
+    } else {
+      pathway_weights <- pathway_weights %>%
+        full_join(dat, by = 'gene_set')
+    }
+  }
+
+  # create combined pathway expression statistics dataframe
+  pathway_stat_files <- Sys.glob(file.path(output_dir, '*_pathway_stats.csv'))
+
+  pathway_stats <- NULL
+
+  for (infile in pathway_stat_files) {
+    # load pathway expression data
+    dat <- read_csv(infile, col_types = cols())
+
+    # add to combined dataset
+    if (is.null(pathway_stats)) {
+      pathway_stats <- dat
+    } else {
+      pathway_stats <- pathway_stats %>%
+        full_join(dat, by = 'gene_set')
+    }
+  }
+
+  # save combined pathway weight and statistics data
+  write_csv(pathway_weights, pathway_weights_file)
+  write_csv(pathway_stats, pathway_stats_file)
+} else {
+  pathway_weights <- read_csv(pathway_weights_file, col_types = cols())
+  pathway_stats <- read_csv(pathway_stats_file, col_types = cols())
 }
-
-#table(duplicated(pathway_weights$gene_set))
-# 
-# FALSE 
-# 54389 
- 
-#dups <- pathway_weights$gene_set[duplicated(pathway_weights$gene_set)]
-#length(dups)
-# [1] 0
-
-# split into pathway statistic and weight dataframes
-pathway_stats <- pathway_weights %>%
-	select(-matches('_pval$')) %>%
-  select(gene_set, everything())
-
-pathway_pvals <- pathway_weights %>%
-	select(gene_set, matches('_pval$')) %>%
-  select(gene_set, everything())
-
-# save combined pathway weight data
-write_csv(pathway_stats, file.path(output_dir, 'combined_pathway_stats.csv'))
-write_csv(pathway_pvals, file.path(output_dir, 'combined_pathway_pvals.csv'))
 ```
 

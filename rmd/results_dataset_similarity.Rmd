@@ -1,8 +1,118 @@
 ## Dataset similarity
 
-### By gene standard deviation
+### By gene expression
+
+#### Gene expression overview
+
+Below, gene expression heatmaps are shown for each individual dataset for a subsample of 
+500 randomly selected genes. Genes are chosen such that they are measured in across all
+datasets.
+
+```{r measure_missing_data}
+# number of missing values for each gene
+num_na <- apply(gene_weights, 1, function(x) { sum(is.na(x)) })
+
+#table(num_na == 0)
+# 
+# FALSE  TRUE 
+# 56469  5300 
+
+# genes measured across all datasets
+complete_genes <- gene_weights$gene_symbol[num_na == 0]
+```
+
+```{r indiv_gene_expr_heatmap, results = 'asis'}
+# subset of n = 500 genes with the largest variance across all datasets
+gene_vars <- gene_stats %>%
+  select(gene_symbol, ends_with('_var')) %>%
+  filter(gene_symbol %in% complete_genes) %>%
+  column_to_rownames('gene_symbol')
+
+gene_var_totals <- rowSums(gene_vars)
+
+max_var_genes <- names(head(sort(gene_var_totals, decreasing = TRUE), 500))
+
+# order genes based on the average expression for each dataset
+dat <- gene_stats %>%
+  filter(gene_symbol %in% max_var_genes) %>%
+  select(gene_symbol, ends_with('_mean')) %>%
+  column_to_rownames('gene_symbol')
+
+# determine gene ordering to use
+gene_order <- hclust(dist(dat))$order
+
+# next, load each individual expression dataset and generate a heatmap for the
+# specified genes, keeping the order of the genes constant.
+
+# gene expression datasets
+infiles <- Sys.glob(file.path(geo_dir, '*', 'processed', sprintf("*_gene_expr.csv")))
+
+for (infile in infiles) {
+  # accession
+  acc <- sub('_gene_expr.csv', '', basename(infile))
+
+  cat(sprintf('#### %s\n', acc))
+
+  # load expression data, collapse multi-mapped genes, and select subset genes
+  dat <- read_csv(infile, col_types = cols()) %>%
+    select(-matches('ensgene')) %>%
+    separate_rows(gene_symbol, sep = " ?//+ ?") %>%
+    group_by(gene_symbol) %>%
+    filter(!is.na(gene_symbol)) %>%
+    summarize_all(sum) %>%
+    filter(gene_symbol %in% max_var_genes) %>%
+    column_to_rownames('gene_symbol')
+
+  # plot heatmap
+  aheatmap(log2(dat + 1), color = viridis(100), Rowv = FALSE, main = acc)
+}
+```
+
+#### Gene expression correlation heatmap
+
+Below, average expression for the ~5,300 genes that are measured across all datasets 
+is compared across datasets. The total average expression within each dataset is
+normalized 
 
 ```{r}
+# get average expression for each dataset
+dat <- gene_stats %>%
+  select(ends_with('mean'))
+
+colnames(dat) <- sub('_mean', '', colnames(dat))
+
+# normalize totals across datasets
+dat <- sweep(dat, 2, colSums(dat), '/') * 1E6
+
+# limit to genes measured in all datasets
+dat <- dat %>%
+  filter(gene_symbol %in% complete_genes)
+
+cor_mat <- cor(dat)
+
+# dataset annotations
+annot_df <- datasets[match(colnames(dat), datasets$accession), ] %>%
+  select(disease_stage, platform) %>%
+  as.data.frame
+
+annot_df$stage <- rep('Mixed', nrow(cor_mat))
+annot_df$stage[annot_df$disease_stage == 'Newly Diagnosed'] <- 'Newly Diagnosed'
+annot_df$stage[annot_df$disease_stage == 'Relapsed'] <- 'Relapsed'
+
+annot_df <- annot_df %>%
+  select(-disease_stage)
+
+dnames <- datasets$dataset[match(colnames(cor_mat), datasets$accession)]
+colnames(cor_mat) <- dnames
+rownames(cor_mat) <- dnames
+
+aheatmap(cor_mat, color = viridis(100), Colv = FALSE, annRow = annot_df, annColors =
+         c('Dark2', 'Set2'))
+```
+
+### By gene standard deviation
+
+```{r sd_cor_mat}
 sd_dat <- gene_stats %>%
   select(matches('_sd$'))
 
@@ -13,7 +123,7 @@ heatmaply(sd_cor_mat)
 
 #### By gene MAD
 
-```{r}
+```{r mad_cor_mat}
 mad_dat <- gene_stats %>%
   select(matches('_mad$'))
 
@@ -24,7 +134,7 @@ heatmaply(mad_cor_mat)
 
 #### By gene dip statistic
 
-```{r}
+```{r dip_cor_mat}
 dip_dat <- gene_stats %>%
   select(matches('_dip_stat$'))
 
@@ -33,20 +143,13 @@ dip_cor_mat <- cor(dip_dat, use = 'pairwise.complete.obs')
 heatmaply(dip_cor_mat)
 ```
 
-### Missing data
-
-```{r, fig.height = 24, fig.width = 8}
-plot_missing(gene_pvals, ggtheme = theme_bw_high_res())
-```
-
 ## Data distributions
 
 ### Standard Deviation
 
 ```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_sd', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
+dat <- gene_stats %>%
+  select(ends_with('_sd')) %>%
   gather(key = dataset, value = statistic) %>%
   na.omit
 
@@ -64,9 +167,8 @@ ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
 ### Median Absolute Deviation
 
 ```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_mad', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
+dat <- gene_stats %>%
+  select(ends_with('_mad')) %>%
   gather(key = dataset, value = statistic) %>%
   na.omit
 
@@ -84,9 +186,8 @@ ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
 ### Kurtosis
 
 ```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_kurtosis', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
+dat <- gene_stats %>%
+  select(ends_with('_kurtosis')) %>%
   gather(key = dataset, value = statistic) %>%
   na.omit
 
@@ -106,9 +207,8 @@ ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
 #### Dip Stat
 
 ```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_dip_stat', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
+dat <- gene_stats %>%
+  select(ends_with('_dip_score')) %>%
   gather(key = dataset, value = statistic) %>%
   na.omit
 
@@ -119,28 +219,12 @@ ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
   theme_bw_high_res()
 ```
 
-#### Dip P-value
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_dip_pval', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  facet_wrap(~dataset, scales = 'free') +
-  xlab("Dip P-value") +
-  theme_bw_high_res()
-```
-
 ### Multiple Myeloma Disease Stage
 
 ```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_stage', colnames(gene_weights))
+ind <- grepl('_stage', colnames(gene_pvals))
 
-dat <- gene_weights[, ind] %>%
+dat <- gene_pvals[, ind] %>%
   gather(key = dataset, value = statistic) %>%
   na.omit
 

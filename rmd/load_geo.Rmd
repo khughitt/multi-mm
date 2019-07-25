@@ -6,8 +6,6 @@
 # gene-level stats)
 #
 # GSE31161
-# GSE6699
-# GSE7039
 #
 # Question: For datasets with "healthy" samples, should we also check for genes that
 # differ the most between MM/healthy individuals?
@@ -22,11 +20,15 @@ factor_covariates <- list(
   "GSE2113"   = c('mm_stage'),
   "GSE24080"  = c('pfs_event', 'patient_died'),
   "GSE2658"   = c('patient_died', 'patient_subgroup'),
+  "GSE26760"  = c('mm_stage'),
   "GSE2912"   = c('mm_stage'),
+  "GSE39754"  = c('treatment_response'),
   "GSE47552"  = c('mm_stage'),
   "GSE57317"  = c('patient_subgroup'),
+  "GSE5900"   = c('mm_stage'),
   "GSE6477"   = c('mm_stage'),
   "GSE68871"  = c('treatment_response'),
+  "GSE6691"   = c('mm_stage'),
   "GSE7039"   = c('patient_died'),
   "GSE83503"  = c('patient_died', 'pfs_event'),
   "GSE9782"   = c('treatment_response', 'patient_subgroup')
@@ -43,6 +45,10 @@ survival_covariates <- list(
   "GSE57317" = list('os'  = c('os_time', 'os_event'))
 )
 
+# create paralellization handler
+cl <- makeCluster(MAX_THREADS, outfile='')
+registerDoParallel(cl)
+
 #for (acc in accessions) {
 tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 'tidyverse', 'survival')) %dopar% {
   # load gene expression data
@@ -50,22 +56,33 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
 
   # filenames
   gene_expr_infile    <- file.path(data_dir, sprintf("%s_gene_expr.csv", acc))
-  pathway_expr_infile <- file.path(data_dir, sprintf("%s_pathway_expr.csv", acc))
+  pathway_expr_infile <- file.path(data_dir, sprintf("%s_pathway_expr_%s.csv", acc,
+                                                     PATHWAY_AGG_FUNC))
   mdat_infile         <- file.path(data_dir, sprintf("%s_sample_metadata.csv", acc))
 
-  gene_weights_outfile    <- file.path(output_dir, sprintf('%s_gene_weights.csv', acc))
-  pathway_weights_outfile <- file.path(output_dir, sprintf('%s_pathway_weights.csv', acc))
-  fgsea_outfile           <- file.path(output_dir, sprintf('%s_fgsea_results.csv', acc))
+  # gene- and pathway-level expression statistics (mean, median, variance, etc.)
+  gene_stats_outfile    <- file.path(output_dir, sprintf('%s_gene_stats.csv', acc))
+  pathway_stats_outfile <- file.path(output_dir, sprintf('%s_pathway_stats.csv', acc))
+
+  gene_rsqs_outfile    <- file.path(output_dir, sprintf('%s_gene_rsqs.csv', acc))
+  pathway_rsqs_outfile <- file.path(output_dir, sprintf('%s_pathway_rsqs.csv', acc))
+
+  # gene- and pathway-level covariate p-values
+  gene_pvals_outfile    <- file.path(output_dir, sprintf('%s_gene_pvals.csv', acc))
+  pathway_pvals_outfile <- file.path(output_dir, sprintf('%s_pathway_pvals.csv', acc))
+
+  fgsea_rsq_outfile     <- file.path(output_dir, sprintf('%s_fgsea_rsq_results.csv', acc))
+  fgsea_pval_outfile    <- file.path(output_dir, sprintf('%s_fgsea_pval_results.csv', acc))
 
   # if dataset has already been completely processed, skip 
-	if (file.exists(gene_weights_outfile) && file.exists(pathway_weights_outfile) && file.exists(fgsea_outfile)) {
-		message(sprintf("Skipping %s; output already exists...", acc))
+	if (file.exists(gene_stats_outfile) && file.exists(pathway_stats_outfile) && file.exists(fgsea_pval_outfile)) {
+		#message(sprintf("Skipping %s; output already exists...", acc))
     return(NULL)
 	}
 
   # if data is missing, skip
   if (!file.exists(gene_expr_infile)) {
-		message(sprintf("Skipping %s; data unavailable...", acc))
+		#message(sprintf("Skipping %s; data unavailable...", acc))
     return(NULL)
   }
 
@@ -77,38 +94,37 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
 	# exclude any entries which couldn't be mapped to any gene symbols
 	gene_expr <- gene_expr[!is.na(gene_expr$gene_symbol), ]	
 
+  # drop probe_id / ensgene column; only gene_symbol needed
+  gene_expr <- gene_expr[, !colnames(gene_expr) %in% c('probe_id', 'ensgene')]
+
+  # create a "non-redundant" version of the gene expression data by collapsing
+  # multi-mapped genes, if present; dividers used are either "//" or "///", possibly
+  # including a space on either space.
+
   # sample column indices
-  ID_COLS <- c('probe_id', 'gene_symbol', 'ensgene')
-	sample_ind <- colnames(gene_expr) %in% ID_COLS
+  #ID_COLS <- c('probe_id', 'gene_symbol', 'ensgene')
+	#sample_ind <- colnames(gene_expr) %in% ID_COLS
 
   # create a pathway / gene set-projected version of expression data
   if (!file.exists(pathway_expr_infile)) {
     pathway_expr <- NULL
-    pathway_names <- c()
 
-    # when computing pathway-level expression, collapse multi-mapped probes
-    # into single gene (non-redundant) entries
-    if ('probe_id' %in% colnames(gene_expr)) {
-      gene_expr_nr <- gene_expr %>%
-        separate_rows(gene_symbol, sep = " ?/+ ?") %>%
-        group_by(gene_symbol) %>%
-        select(-probe_id) %>%
-        summarize_all(sum)
-    } else if ('ensgene' %in% colnames(gene_expr)) {
-      # for datasets with ensgenes + gene symbols, perform a similar summarization
-      # without the probe_id splitting step
-      gene_expr_nr <- gene_expr %>%
-        group_by(gene_symbol) %>%
-        select(-ensgene) %>%
-        summarize_all(sum)
-    } else {
-      gene_expr_nr <- gene_expr
-    }
+    # note for gene-wise covariate associations, we want to hold off on this step until
+    # after all correlations have been measured; this way we man keep the min/max value
+    # observed for each gene.
+    gene_expr_nr <- gene_expr %>%
+      separate_rows(gene_symbol, sep = " ?//+ ?") %>%
+      group_by(gene_symbol) %>%
+      summarize_all(sum)
 
-    message(sprintf("Measuring pathway expression for %s...", acc))
+    for (gset_num in 1:length(gene_sets)) {
+      collection <- names(gene_sets)[gset_num]
 
-    for (collection in names(gene_sets)) {
+      message(sprintf("[%d / %d] Measuring pathway expression for %s (%s)...", 
+                      gset_num, length(gene_sets), acc, collection))
+
       for (gset in names(gene_sets[[collection]])) {
+
         dat_gset <- gene_expr_nr %>%
           filter(gene_symbol %in% gene_sets[[collection]][[gset]])
 
@@ -116,19 +132,29 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
         if (nrow(dat_gset) == 0) {
           next
         }
-        pathway_names <- c(pathway_names, gset)
 
-        # add pathway-level expression data
-        pathway_expr <- rbind(pathway_expr, apply(dat_gset[, -1], 2, median, na.rm = TRUE))
+        # add pathway-level expression data and fix rowname
+        pathway_expr <- rbind(pathway_expr, apply(dat_gset[, -1], 2, PATHWAY_AGG_FUNC, na.rm = TRUE))
+        rownames(pathway_expr)[nrow(pathway_expr)] <- gset
       }
+
     }
 
     # drop any rows with zero variance (uninformative)
     mask <- apply(pathway_expr, 1, var, na.rm = TRUE) > 0
-    pathway_expr <- pathway_expr[mask, ]
-    pathway_names <- pathway_names[mask]
 
-    pathway_expr <- bind_cols(gene_set = pathway_names, as.data.frame(pathway_expr))
+    #table(mask)
+    # mask
+    # FALSE  TRUE 
+    #    14 60597 
+
+    pathway_expr <- pathway_expr[mask, ]
+
+    pathway_expr <- pathway_expr %>%
+      as.data.frame %>%
+      rownames_to_column('gene_set')
+
+    message(sprintf("Finished measuring pathway expression for %s...", acc))
 
     write_csv(pathway_expr, pathway_expr_infile)
   } else {
@@ -136,33 +162,32 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
     pathway_expr <- read_csv(pathway_expr_infile, col_types = cols())
   }
 
-  # create versions without the gene, etc. identifiers
-  gene_expr_mat    <- as.matrix(gene_expr[, !sample_ind])
+  # create versions without the id columns
+  gene_expr_mat    <- as.matrix(gene_expr[, -1])
   pathway_expr_mat <- as.matrix(pathway_expr[, -1])
 
   # load sample metadata
   mdat <- read.csv(mdat_infile)
 
-  # next generate or load gene and pathway weights for dataset
-  if (!file.exists(gene_weights_outfile)) {
-    # initialize result variable; creates a dataframe with only the gene identifiers
-    gene_weights    <- gene_expr[, sample_ind, drop = FALSE]
-    pathway_weights <- pathway_expr[, 1, drop = FALSE]
+  # row and column indices corresponding to p-value in coef(summary(..)) output for
+  # glm fit
+  GLM_PVAL_ROW_IND <- 2
+  GLM_PVAL_COL_IND <- 4
 
-    # measure correlation or R^2 between each gene/pathway and each factor covariate
+  # next generate or load gene weights for dataset
+  if (!file.exists(gene_stats_outfile)) {
+    # initialize result variables; creates dataframes with only the gene identifiers
+    gene_rsqs     <- gene_expr[, 1, drop = FALSE]
+    gene_pvals    <- gene_expr[, 1, drop = FALSE]
+
+    # measure correlation or pseudo R^2 between each gene and each factor covariate
     if (acc %in% names(factor_covariates)) {
-      # keep track of column names to use for output
-      output_cols <- c()
-
+      # iterate over factor covariates
       for (covariate in factor_covariates[[acc]]) {
-        message(sprintf("Processing %s / %s", acc, covariate))
+        message(sprintf("Processing %s / %s (genes)", acc, covariate))
 
         # get covariate column
         response <- mdat[, covariate]
-
-        # column name to use in output
-        output_colname <- make.names(sprintf("%s_%s", acc, covariate))
-        output_cols <- c(output_cols, output_colname)
 
         # for factor columns, compute R^2 for a logit predicting the factor level
         if (is.character(response) || length(unique(response)) < 10) {
@@ -171,211 +196,313 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
           # multinomial logistic regression
           null <- glm(response ~ 1, family="binomial")
 
-          #clusterExport(cl, c('response', 'null'))
+          # gene-level statistics;
 
-          # genes
-          #gene_weight_vector <- parApply(cl, gene_expr_mat, 1, function(x) {
-          gene_weight_vector <- apply(gene_expr_mat, 1, function(x) {
+          # returns a 2 x <num genes> matrix where the first row contains R^2 values
+          # and the second one P-values
+          gene_res <- apply(gene_expr_mat, 1, function(x) {
             mod <- glm(response ~ x, family = "binomial")
+            rsq <- max(as.numeric(1 - logLik(mod) / logLik(null)), 0)
 
-            # compute pseudo-R^2
-            max(as.numeric(1 - logLik(mod) / logLik(null)), 0)
+            # in some cases (e.g. when x contains mostly 0's), fit will only include an
+            # intercept term, making it necessary to check the coef dimensions
+            coefs <- coef(summary(mod))
+
+            if (all(dim(coefs) == c(2, 4))) {
+              pval <- coefs[GLM_PVAL_ROW_IND, GLM_PVAL_COL_IND]
+            } else {
+              pval <- 1
+            }
+
+            c(rsq, pval)
           })
 
-          # pathways
-          #pathway_weight_vector <- parApply(cl, pathway_expr_mat, 1, function(x) {
-          pathway_weight_vector <- apply(pathway_expr_mat, 1, function(x) {
-            mod <- glm(response ~ x, family = "binomial")
-
-            # compute pseudo-R^2
-            max(as.numeric(1 - logLik(mod) / logLik(null)), 0)
-          })
+          dataset_gene_rsqs  <- gene_res[1, ]
+          dataset_gene_pvals <- gene_res[2, ]
         }
 
-        gene_weights    <- cbind(gene_weights, gene_weight_vector)
-        pathway_weights <- cbind(pathway_weights, pathway_weight_vector)
-      }
+        # append to result dataframes and update column names
+        gene_rsqs  <- cbind(gene_rsqs, dataset_gene_rsqs)
+        gene_pvals <- cbind(gene_pvals, dataset_gene_pvals)
 
-      # fix column and row names and save to disk
-      colnames(gene_weights)[(sum(sample_ind) + 1):ncol(gene_weights)] <- output_cols
-      colnames(pathway_weights)[2:ncol(pathway_weights)] <- output_cols
+        # column name to use in output
+        rsq_cname  <- make.names(sprintf("%s_%s_rsq", acc, covariate))
+        pval_cname <- make.names(sprintf("%s_%s_pval", acc, covariate))
+
+        colnames(gene_rsqs)[ncol(gene_rsqs)]   <- rsq_cname
+        colnames(gene_pvals)[ncol(gene_pvals)] <- pval_cname
+      }
     }
 
     # next, for those datasets with survival-related covariates, build cox regression
-    # models
+    # models and record p-values
     if (acc %in% names(survival_covariates)) {
       message(sprintf("Analyzing survival covariates for %s...", acc))
 
       for (survival_covariate_name in names(survival_covariates[[acc]])) {
-        message(sprintf("Processing %s / %s", acc, survival_covariate_name))
+        message(sprintf("Processing %s / %s (genes)", acc, survival_covariate_name))
 
         surv_cov <- survival_covariates[[acc]][[survival_covariate_name]]
 
         # genes
+        surv <- survival::Surv(time = mdat[, surv_cov[1]], event = mdat[, surv_cov[2]])
+
         gene_fits <- apply(gene_expr_mat, 1, function(x) {
-          surv <- survival::Surv(time = mdat[, surv_cov[1]], event = mdat[, surv_cov[2]])
           summary(survival::coxph(surv ~ x))
         })
 
-        # pathways
-        #pathway_fits <- parApply(cl, pathway_expr_mat, 1, function(x) {
-        pathway_fits <- apply(pathway_expr_mat, 1, function(x) {
-          surv <- survival::Surv(time = mdat[, surv_cov[1]], event = mdat[, surv_cov[2]])
-          summary(survival::coxph(surv ~ x))
-        })
-
-        #} else {
-        #  # survival duration only
-        #  fits <- parApply(cl, gene_expr_mat, 1, function(x) {
-        #    surv <- survival::Surv(time = mdat[, surv_cov[1]])
-        #    summary(survival::coxph(surv ~ x))
-        #  })
-        #}
-
-        # cox regression Wald statistic
-        gene_cox_stat <- as.numeric(unlist(lapply(gene_fits, function(x) {
-          x$waldtest['test']
-        })))
-        pathway_cox_stat <- as.numeric(unlist(lapply(pathway_fits, function(x) {
-          x$waldtest['test']
-        })))
-
-        # cox regression Wald P-value
-        gene_cox_pval <- as.numeric(unlist(lapply(gene_fits, function(x) {
-          x$waldtest['pvalue']
-        })))
-        pathway_cox_pval <- as.numeric(unlist(lapply(pathway_fits, function(x) {
+        # extract cox regression p-values
+        gene_cox_pvals <- as.numeric(unlist(lapply(gene_fits, function(x) {
           x$waldtest['pvalue']
         })))
 
         # add to gene weights and fix column names
-        gene_weights    <- cbind(gene_weights, gene_cox_stat, gene_cox_pval)
-        pathway_weights <- cbind(pathway_weights, pathway_cox_stat, pathway_cox_pval)
+        gene_pvals    <- cbind(gene_pvals, gene_cox_pvals)
 
-        cnames <- paste(acc, survival_covariate_name, c('cox_stat', 'cox_pval'), sep = '_')
+        cname <- make.names(paste(acc, survival_covariate_name, 'cox_pval', sep = '_'))
 
-        colnames(gene_weights)[(ncol(gene_weights) - 1):ncol(gene_weights)] <- cnames
-        colnames(pathway_weights)[(ncol(pathway_weights) - 1):ncol(pathway_weights)] <- cnames
+        colnames(gene_pvals)[ncol(gene_pvals)] <- cname
       }
     }
 
-    # compute gene- or pathway-wise distribution statistics
-    gene_weights$mean     <- apply(gene_expr_mat, 1, mean)
-    gene_weights$median   <- apply(gene_expr_mat, 1, median)
-    gene_weights$sd       <- apply(gene_expr_mat, 1, sd)
-    gene_weights$mad      <- apply(gene_expr_mat, 1, mad)
-    gene_weights$kurtosis <- apply(gene_expr_mat, 1, kurtosis)
+    message(sprintf("Computing gene expression statistics for %s...", acc))
 
-    pathway_weights$mean     <- apply(pathway_expr_mat, 1, mean)
-    pathway_weights$median   <- apply(pathway_expr_mat, 1, median)
-    pathway_weights$sd       <- apply(pathway_expr_mat, 1, sd)
-    pathway_weights$mad      <- apply(pathway_expr_mat, 1, mad)
-    pathway_weights$kurtosis <- apply(pathway_expr_mat, 1, kurtosis)
+    # compute gene-wise distribution statistics
+    gene_stats <- data.frame(
+      'gene_symbol' = gene_expr[, 1, drop = FALSE],
+      'mean'        = apply(gene_expr_mat, 1, mean),
+      'median'      = apply(gene_expr_mat, 1, median),
+      'sd'          = apply(gene_expr_mat, 1, sd),
+      'var'         = apply(gene_expr_mat, 1, var),
+      'mad'         = apply(gene_expr_mat, 1, mad),
+      'kurtosis'    = apply(gene_expr_mat, 1, kurtosis)
+    )
 
-    # dip test
-    dip <- apply(gene_expr_mat, 1, dip.test)
-    gene_weights$dip_stat <- unlist(lapply(dip, function(x) { x$statistic }))
-    gene_weights$dip_pval <- unlist(lapply(dip, function(x) { x$p.val }))
-
-    dip <- apply(pathway_expr_mat, 1, dip.test)
-    pathway_weights$dip_stat <- unlist(lapply(dip, function(x) { x$statistic }))
-    pathway_weights$dip_pval <- unlist(lapply(dip, function(x) { x$p.val }))
+    # hartigan's dip test of unimodality
+    gene_dip <- apply(gene_expr_mat, 1, dip.test)
+    gene_stats$dip_score <- -log10(unlist(lapply(gene_dip, function(x) { x$p.val })))
 
     # prepend dataset accession to column names
-    ind <- colnames(gene_weights) %in% c('mean', 'median', 'sd', 'mad', 'kurtosis', 'dip_stat', 'dip_pval')
-    colnames(gene_weights)[ind]    <- paste0(acc, '_', colnames(gene_weights)[ind])
+    cnames <- paste0(acc, '_', colnames(gene_stats)[-1])
 
-    ind <- colnames(pathway_weights) %in% c('mean', 'median', 'sd', 'mad', 'kurtosis', 'dip_stat', 'dip_pval')
-    colnames(pathway_weights)[ind] <- paste0(acc, '_', colnames(pathway_weights)[ind])
+    # for microarray data which may include multiple genes in the gene_symbol field
+    # (e.g. "ABC1 // ABC2 // ETC"), first split each multi-mapped row into multiple
+    # rows
+    gene_rsqs <- gene_rsqs %>%
+      separate_rows(gene_symbol, sep = " ?//+ ?")
+    gene_pvals <- gene_pvals %>%
+      separate_rows(gene_symbol, sep = " ?//+ ?")
+    gene_stats <- gene_stats %>%
+      separate_rows(gene_symbol, sep = " ?//+ ?")
 
-    # gene covariate column names
-    pval_cols  <- colnames(gene_weights)[endsWith(colnames(gene_weights), 'pval')]
-    other_cols <- colnames(gene_weights)[startsWith(colnames(gene_weights), 'GSE') &
-                                        !endsWith(colnames(gene_weights), 'pval')]
+    #
+    # next, collapse multi-mapped genes using the follow rules:
+    #
+    # p-values: keep min p-value
+    # rsquares: keep max rsquare
+    # stats   : keep average statistic
+    #
 
-    # for each gene that mapped to multiple probes, keep the most significant results;
-    # i.e. keep the maximum values for each non- p-value column and the minimum
-    # values for each p-value column
-    if ('probe_id' %in% colnames(gene_weights)) {
-      gene_weights <- gene_weights %>%
-        separate_rows(gene_symbol, sep = " ?/+ ?") %>%
-        group_by(gene_symbol) %>%
-        mutate_at(vars(other_cols), max) %>%
-        group_by_at(vars(other_cols), .add = TRUE) %>%
-        summarise_at(vars(pval_cols), min)
-    } else if ('ensgene' %in% colnames(gene_weights)) {
-      # for datasets with ensgenes + gene symbols, perform a similar summarization
-      # without the probe_id splitting step
-      gene_weights <- gene_weights %>%
-        group_by(gene_symbol) %>%
-        mutate_at(vars(other_cols), max) %>%
-        group_by_at(vars(other_cols), .add = TRUE) %>%
-        summarise_at(vars(pval_cols), min)
-    }
+    # rsquared values (use max)
+    gene_rsqs <- gene_rsqs %>%
+      group_by(gene_symbol) %>%
+      summarise_all(max)
 
-    # store gene and pathway weights
-    write_csv(gene_weights, gene_weights_outfile)
-    write_csv(pathway_weights, pathway_weights_outfile)
+    # p-values (use min)
+    gene_pvals <- gene_pvals %>%
+      group_by(gene_symbol) %>%
+      summarise_all(min)
+
+    # expression statistics
+    gene_stats <- gene_stats %>%
+      group_by(gene_symbol) %>%
+      summarise_all(mean)
+
+    # store gene and weights
+    write_csv(gene_stats, gene_stats_outfile)
+    write_csv(gene_pvals, gene_pvals_outfile)
+    write_csv(gene_rsqs,  gene_rsqs_outfile)
+
   } else {
     # otherwise, if the weights already exist, load from disk
-    gene_weights <- read_csv(gene_weights_outfile, col_types = cols())
-    pathway_weights <- read_csv(pathway_weights_outfile, col_types = cols())
+    gene_stats <- read_csv(gene_stats_outfile, col_types = cols())
+    gene_pvals <- read_csv(gene_pvals_outfile, col_types = cols())
+    gene_rsqs  <- read_csv(gene_rsqs_outfile, col_types = cols())
   }
 
-	# create a dataframe to store enrichment results	
-	fgsea_res <- NULL
+  # generate pathway-level weights and expression statistics
+  if (!file.exists(pathway_stats_outfile)) {
+    # initialize result variables; creates dataframes with only the pathway identifiers
+    pathway_stats <- pathway_expr[, 1, drop = FALSE]
+    pathway_rsqs  <- pathway_expr[, 1, drop = FALSE]
+    pathway_pvals <- pathway_expr[, 1, drop = FALSE]
 
-	if (acc %in% names(factor_covariates)) {
-		# get updated column names
-		cov_cols <- sprintf('%s_%s', acc, factor_covariates[[acc]])
+    # measure correlation or pseudo R^2 between each pathway and each factor covariate
+    if (acc %in% names(factor_covariates)) {
+      # iterate over factor covariates
+      for (covariate in factor_covariates[[acc]]) {
+        message(sprintf("Processing %s / %s (pathways)", acc, covariate))
 
-    message(sprintf("Measuring functional enrichment for %s... (1/2)", acc))
+        # get covariate column
+        response <- mdat[, covariate]
 
-		# measure enrichment for non-p-value covariate fields
-		for (covariate in cov_cols) {
-			message(sprintf("Measuring functional enrichment for %s / %s", covariate, acc)) 
+        # for factor columns, compute R^2 for a logit predicting the factor level
+        if (is.character(response) || length(unique(response)) < 10) {
+          response <- factor(response)
 
-			for (gene_set in names(gene_sets)) {
-				set.seed(1)
+          # multinomial logistic regression
+          null <- glm(response ~ 1, family="binomial")
 
-				gene_stats <- setNames(gene_weights %>% pull(covariate), gene_weights$gene_symbol)
+          # pathway-level statistics;
+          pathway_res <- apply(pathway_expr_mat, 1, function(x) {
+            mod <- glm(response ~ x, family = "binomial")
+            rsq <- max(as.numeric(1 - logLik(mod) / logLik(null)), 0)
 
-				# measure functional enrichment
-				res <- fgsea(gene_sets[[gene_set]], gene_stats, nperm = 15000, nproc = 2) %>%
-					select(-leadingEdge) %>%
-					arrange(padj)
+            # in some cases (e.g. when x contains mostly 0's), fit will only include an
+            # intercept term, making it necessary to check the coef dimensions
+            coefs <- coef(summary(mod))
+
+            if (all(dim(coefs) == c(2, 4))) {
+              pval <- coefs[GLM_PVAL_ROW_IND, GLM_PVAL_COL_IND]
+            } else {
+              pval <- 1
+            }
+
+            c(rsq, pval)
+          })
+
+          dataset_pathway_rsqs  <- pathway_res[1, ]
+          dataset_pathway_pvals <- pathway_res[2, ]
+        }
+
+        # append to result dataframes and update column names
+        pathway_rsqs  <- cbind(pathway_rsqs, dataset_pathway_rsqs)
+        pathway_pvals <- cbind(pathway_pvals, dataset_pathway_pvals)
+
+        # column name to use in output
+        rsq_cname  <- make.names(sprintf("%s_%s_rsq", acc, covariate))
+        pval_cname <- make.names(sprintf("%s_%s_pval", acc, covariate))
+
+        colnames(pathway_rsqs)[ncol(pathway_rsqs)] <- rsq_cname
+        colnames(pathway_pvals)[ncol(pathway_pvals)] <- pval_cname
+      }
+    }
+
+    # next, for those datasets with survival-related covariates, build cox regression
+    # models and record p-values
+    if (acc %in% names(survival_covariates)) {
+      message(sprintf("Analyzing survival covariates for %s...", acc))
+
+      for (survival_covariate_name in names(survival_covariates[[acc]])) {
+        message(sprintf("Processing %s / %s (pathways)", acc, survival_covariate_name))
+
+        surv_cov <- survival_covariates[[acc]][[survival_covariate_name]]
+
+        surv <- survival::Surv(time = mdat[, surv_cov[1]], event = mdat[, surv_cov[2]])
+
+        # pathways
+        pathway_fits <- apply(pathway_expr_mat, 1, function(x) {
+          summary(survival::coxph(surv ~ x))
+        })
+
+        # extract cox regression p-values
+        pathway_cox_pvals <- as.numeric(unlist(lapply(pathway_fits, function(x) {
+          x$waldtest['pvalue']
+        })))
+
+        # add to pathway weights and fix column names
+        pathway_pvals <- cbind(pathway_pvals, pathway_cox_pvals)
+
+        cname <- make.names(paste(acc, survival_covariate_name, 'cox_pval', sep = '_'))
+
+        colnames(pathway_pvals)[ncol(pathway_pvals)] <- cname
+      }
+    }
+
+    pathway_stats <- data.frame(
+      'gene_set' = pathway_expr[, 1, drop = FALSE],
+      'mean'     = apply(pathway_expr_mat, 1, mean),
+      'median'   = apply(pathway_expr_mat, 1, median),
+      'sd'       = apply(pathway_expr_mat, 1, sd),
+      'var'      = apply(pathway_expr_mat, 1, var),
+      'mad'      = apply(pathway_expr_mat, 1, mad),
+      'kurtosis' = apply(pathway_expr_mat, 1, kurtosis)
+    )
+
+    # hartigan's dip test of unimodality
+    pathway_dip <- apply(pathway_expr_mat, 1, dip.test)
+    pathway_stats$dip_score <- -log10(unlist(lapply(pathway_dip, function(x) { x$p.val })))
+
+    # prepend dataset accession to column names
+    cnames <- paste0(acc, '_', colnames(pathway_stats)[-1])
+    colnames(pathway_stats)[-1] <- cnames
+
+    # store pathway weights
+    write_csv(pathway_stats, pathway_stats_outfile)
+    write_csv(pathway_pvals, pathway_pvals_outfile)
+    write_csv(pathway_rsqs,  pathway_rsqs_outfile)
+  } else {
+    # otherwise, if the weights already exist, load from disk
+    pathway_stats <- read_csv(pathway_stats_outfile, col_types = cols())
+    pathway_pvals <- read_csv(pathway_pvals_outfile, col_types = cols())
+    pathway_rsqs  <- read_csv(pathway_rsqs_outfile, col_types = cols())
+  }
+
+	# perform functional enrichment on gene-level results
+  if (!file.exists(fgsea_rsq_outfile) && ncol(gene_rsqs) > 1) {
+    fgsea_res <- NULL
+
+    # measure enrichment for categorical covariates (R^2 scores)
+    for (covariate in colnames(gene_rsqs)[-1]) {
+      message(sprintf("Measuring functional enrichment for %s / %s [rsq]", covariate, acc)) 
+
+      for (gene_set in names(gene_sets)) {
+        set.seed(1)
+
+        stats <- setNames(gene_rsqs %>% pull(covariate), gene_rsqs$gene_symbol)
+
+        # measure functional enrichment
+        res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = FGSEA_NPROC) %>%
+          select(-leadingEdge) %>%
+          arrange(padj)
 
         fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
-			}
-		}	
-	}	
+      }
+    }	
 
-	# functional enrichment for p-value columns
-  cov_cols <- colnames(gene_weights)[endsWith(colnames(gene_weights), '_pval')]
+    # store enrichment results
+    message(sprintf("Saving %s", fgsea_rsq_outfile))
+    write_csv(fgsea_res, fgsea_rsq_outfile)
+  }
 
-  message(sprintf("Measuring functional enrichment for %s... (2/2)", acc))
+  # functional enrichment for p-value columns
+  if (!file.exists(fgsea_pval_outfile) && ncol(gene_pvals) > 1) {
+    fgsea_res <- NULL
 
-  # measure enrichment for covariate and dip p-values
-  for (covariate in cov_cols) {
-    message(sprintf("Measuring functional enrichment for %s / %s", covariate, acc)) 
+    # measure enrichment for covariate p-values
+    for (covariate in colnames(gene_pvals)[-1]) {
+      message(sprintf("Measuring functional enrichment for %s / %s [pval]", covariate, acc)) 
 
-    for (gene_set in names(gene_sets)) {
-      set.seed(1)
+      for (gene_set in names(gene_sets)) {
+        set.seed(1)
 
-      gene_stats <- setNames(gene_weights %>% pull(covariate), gene_weights$gene_symbol)
-      
-      # measure functional enrichment
-      res <- fgsea(gene_sets[[gene_set]], gene_stats, nperm = 15000, nproc = 1) %>%
-        select(-leadingEdge) %>%
-        arrange(padj)
+        stats <- setNames(gene_pvals %>% pull(covariate), gene_pvals$gene_symbol)
+        
+        # measure functional enrichment
+        res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = FGSEA_NPROC) %>%
+          select(-leadingEdge) %>%
+          arrange(padj)
 
-      fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
-    }
-  }	
+        fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
+      }
+    }	
 
-	# store enrichment results
-  message(sprintf("Saving %s", fgsea_outfile))
-  write_csv(fgsea_res, fgsea_outfile)
+    # store enrichment results
+    message(sprintf("Saving %s", fgsea_pval_outfile))
+    write_csv(fgsea_res, fgsea_pval_outfile)
+  }
 }
+
+stopCluster(cl)
 ```
 

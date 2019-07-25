@@ -8,7 +8,7 @@ datasets <- read_tsv(file.path(input_dir, 'datasets.tsv')) %>%
 geo_accessions <- list.files(geo_dir)
 
 datasets <- datasets %>%
-  filter(accession %in% c('mmrf', geo_accessions))
+  filter(accession %in% c('MMRF13a', geo_accessions))
 
 datasets %>%
   select(dataset, num_samples, num_genes, incl_surv, incl_stge, incl_resp, disease_stage, accession) %>%

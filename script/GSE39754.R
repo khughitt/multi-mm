@@ -85,7 +85,7 @@ expr_dat <- exprs(eset) %>%
 mask <- !sample_metadata$disease == 'Healthy'
 
 sample_metadata <- sample_metadata[mask, ]
-expr_dat <- expr_dat[, mask]
+expr_dat <- expr_dat[, c(TRUE, TRUE, mask)]
 
 sample_metadata <- sample_metadata %>%
   select(-diagnosis)

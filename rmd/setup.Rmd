@@ -34,9 +34,6 @@ opts_chunk$set(
 # make reproducible
 set.seed(1)
 
-# analysis version
-VERSION <- '2019-07-15'
-
 # base and data directories
 public_data_dir <- '/data/public/human'
 
@@ -47,8 +44,13 @@ mmrf_dir   <- file.path(public_data_dir, 'mmrf_commpass/IA13')
 
 output_dir <- file.path(base_dir, 'output', VERSION)
 
-if (!dir.exists(output_dir)) {
-  dir.create(output_dir, mode = '0755')
+indiv_dir <- file.path(output_dir, 'individual')
+combined_dir <- file.path(output_dir, 'combined')
+
+for (dir_ in c(indiv_dir, combined_dir)) {
+  if (!dir.exists(dir_)) {
+    dir.create(dir_, mode = '0755')
+  }
 }
 
 opts_knit$set(root.dir = base_dir)
@@ -64,10 +66,5 @@ theme_bw_high_res <- function (base_size = 11, base_line_size = 0.5) {
 }
 
 # maximum number of threads to use for parallel processes
-MAX_THREADS <- 16
-MAX_THREADS <- max(1, min(detectCores() - 2, MAX_THREADS, na.rm=TRUE))
-
-# create paralellization handler
-cl <- makeCluster(MAX_THREADS, outfile='')
-registerDoParallel(cl)
+MAX_THREADS <- max(1, min(detectCores() - 4, MAX_THREADS, na.rm=TRUE))
 ```
