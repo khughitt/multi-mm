@@ -19,3 +19,18 @@ cat(sprintf("- Num. pathways: %d\n", nrow(pathway_weights)))
 cat(sprintf("- Num. variables: %d\n", ncol(pathway_weights) - 1))
 ```
 
+### Proportion of significant adjusted p-values per covariate measured
+
+```{r, results = 'asis'}
+dat <- gene_weights %>%
+  select(ends_with('_pval'))
+
+props <- sapply(dat, function(x) { sum(x < 0.05, na.rm = TRUE) / length(x) })
+
+props <- setNames(as.data.frame(props), 'proportion') %>%
+  rownames_to_column('covariate') %>%
+  arrange(desc(proportion))
+
+kable(props)
+```
+

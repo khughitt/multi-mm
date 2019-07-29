@@ -280,7 +280,9 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
 
     # hartigan's dip test of unimodality
     gene_dip <- apply(gene_expr_mat, 1, dip.test)
-    gene_stats$dip_score <- -log10(unlist(lapply(gene_dip, function(x) { x$p.val })))
+
+    dip_pvals <- unlist(lapply(gene_dip, function(x) { x$p.val }))
+    gene_stats$dip_score <- -log10(pmax(MIN_PVAL, dip_pvals))
 
     # prepend dataset accession to column names
     cnames <- paste0(acc, '_', colnames(gene_stats)[-1])
@@ -431,7 +433,9 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
 
     # hartigan's dip test of unimodality
     pathway_dip <- apply(pathway_expr_mat, 1, dip.test)
-    pathway_stats$dip_score <- -log10(unlist(lapply(pathway_dip, function(x) { x$p.val })))
+
+    dip_pvals <- unlist(lapply(pathway_dip, function(x) { x$p.val }))
+    pathway_stats$dip_score <- -log10(pmax(MIN_PVAL, dip_pvals))
 
     # prepend dataset accession to column names
     cnames <- paste0(acc, '_', colnames(pathway_stats)[-1])
@@ -462,7 +466,7 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
         stats <- setNames(gene_rsqs %>% pull(covariate), gene_rsqs$gene_symbol)
 
         # measure functional enrichment
-        res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = FGSEA_NPROC) %>%
+        res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = 1) %>%
           select(-leadingEdge) %>%
           arrange(padj)
 
@@ -489,7 +493,7 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
         stats <- setNames(gene_pvals %>% pull(covariate), gene_pvals$gene_symbol)
         
         # measure functional enrichment
-        res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = FGSEA_NPROC) %>%
+        res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = 1) %>%
           select(-leadingEdge) %>%
           arrange(padj)
 

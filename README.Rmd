@@ -14,6 +14,7 @@ TODO: July 24, 2019
 
 - Add <collection> prefix to gene set entries to account for keys (e.g. drug names)
    that appear in multiple collections
+- Use individual MSigDB gmt files instead of combined one for easier comparison
 
 TODO: July 23, 2019
 
@@ -30,20 +31,22 @@ VERSION <- '2019-07-22'
 
 # maximum ratio of covariate variables to allow before exluding a gene
 # from the final score computation
-GENE_MAX_MISSING_COVARIATES <- 0.5
+GENE_MAX_MISSING_COVARIATES <- 0.8
 
 # minimum number of genes required for gene set to be included in analysis
 GENE_SET_MIN_SIZE <- 5
+
+# minimum p-value to allow for -log10 score computation
+MIN_PVAL <- 1E-10
 
 # function to use when aggregating data along pathways
 PATHWAY_AGG_FUNC <- 'mean'
 
 # maximum number of threads to use
-MAX_THREADS <- 14
+MAX_THREADS <- 12
 
 # fgsea parameters
 FGSEA_NPERM <- 15000
-FGSEA_NPROC <- 2
 ```
 
 ```{r child='rmd/setup.Rmd'}
@@ -90,13 +93,7 @@ Summary of datasets included in this analysis:
 ```{r child='rmd/results_functional_enrichment.Rmd'}
 ```
 
-```{r child='rmd/results_covariate_similarity.Rmd'}
-```
-
 ```{r child='rmd/results_gene_scores.Rmd'}
-```
-
-```{r child='rmd/results_gene_set_scores.Rmd'}
 ```
 
 # System information

@@ -23,9 +23,9 @@ fgsea_pval_path    <- file.path(output_dir, 'MMRF13a_fgsea_pval_results.csv')
 stats_avail <- all(file.exists(gene_stats_path, pathway_stats_path))
 ```
 
-```{r load_mmrf_data}
+```{r load_mmrf_data, message = FALSE}
 # load patient gene expression data
-gene_expr_raw <- read_tsv(gene_expr_path)
+gene_expr_raw <- read_tsv(gene_expr_path, col_types = cols())
 
 # for now, limit ourselves to baseline bone marrow samples so that we have a single
 # sample collected at the same relative stage for each patient
@@ -89,7 +89,7 @@ if (!file.exists(pathway_expr_path)) {
   registerDoParallel(cl)
 
   # aggregate MMRF gene expression data
-  res <- foreach(gset_num = 1:length(gene_sets), .packages = c('tidyverse')) %dopar% {
+  res <- foreach(gset_num = 1:length(gene_sets), .packages = c('dplyr')) %dopar% {
     collection = names(gene_sets)[gset_num]
 
     pathway_expr <- NULL
@@ -139,9 +139,9 @@ if (!file.exists(pathway_expr_path)) {
 
 #### MMRF CoMMpass Clinical Variables
 
-```{r load_mmrf_patient_clinical_metadata, eval = !stats_avail}
+```{r load_mmrf_patient_clinical_metadata, eval = !stats_avail, message = FALSE}
 # load patient clinical metadata
-mmrf_clin <- read_csv(mmrf_clin_metadata) %>%
+mmrf_clin <- read_csv(mmrf_clin_metadata, col_types = cols()) %>%
   select(public_id = PUBLIC_ID, iss_stage = R_ISS, ecog, mm_status = D_PT_mmstatus)
 
 # limit metadata to those patients for which gene expression data is present and match
@@ -259,9 +259,9 @@ for (covariate in c('iss_stage', 'ecog', 'mm_status')) {
 
 #### MMRF CoMMpass Treatment Variables
 
-```{r load_mmrf_patient_treatment_metadata, eval = !stats_avail}
+```{r load_mmrf_patient_treatment_metadata, eval = !stats_avail, message = FALSE}
 # load patient treatment metadata
-mmrf_treatment <- read_csv(mmrf_trmt_metadata)
+mmrf_treatment <- read_csv(mmrf_trmt_metadata, col_types = cols())
 
 # limit metadata to those patients for which gene express data is present and match
 # orders
@@ -390,10 +390,10 @@ for (treatment in treatments) {
 
 #### MMRF CoMMpass Survival Variables
 
-```{r load_mmrf_patient_survival_metadata, eval = !stats_avail}
+```{r load_mmrf_patient_survival_metadata, eval = !stats_avail, message = FALSE}
 # load patient survival metadata
 # regular and censored overall & progression-free survival
-mmrf_surv <- read_csv(mmrf_surv_metadata)
+mmrf_surv <- read_csv(mmrf_surv_metadata, col_types = cols())
 
 mmrf_surv <- mmrf_surv %>%
   select(public_id, pfsdy, pfscdy, oscdy, censos, censpfs)
@@ -500,10 +500,14 @@ pathway_stats <- data.frame(
 )
 
 gene_dip <- apply(as.matrix(gene_expr[, -1]), 1, dip.test)
-gene_stats$MMRF13a_dip_pval <- unlist(lapply(gene_dip, function(x) { x$p.val }))
+
+dip_pvals <- unlist(lapply(gene_dip, function(x) { x$p.val }))
+gene_stats$MMRF13a_dip_score <- -log10(pmax(MIN_PVAL, dip_pvals))
 
 pathway_dip <- apply(as.matrix(pathway_expr[, -1]), 1, dip.test)
-pathway_stats$MMRF13a_dip_pval <- unlist(lapply(pathway_dip, function(x) { x$p.val }))
+
+dip_pvals <- unlist(lapply(pathway_dip, function(x) { x$p.val }))
+pathway_stats$MMRF13a_dip_score <- -log10(pmax(MIN_PVAL, dip_pvals))
 
 #
 # next, collapse multi-mapped genes using the follow rules:
@@ -550,9 +554,9 @@ if (!file.exists(fgsea_rsq_path)) {
 
     # create paralellization handler
     cl <- makeCluster(MAX_THREADS, outfile='')
-    registerDoParallel(cl)
+    registerDoParallel(cl, cores = MAX_THREADS)
 
-    cov_res <- foreach(gene_set = names(gene_sets), .packages = c('fgsea', 'tidyverse')) %dopar% {
+    cov_res <- foreach(gene_set = names(gene_sets), .packages = c('fgsea', 'dplyr')) %dopar% {
       set.seed(1)
 
       message(sprintf("Measuring enrichment for MMRF / %s", gene_set))
@@ -560,20 +564,22 @@ if (!file.exists(fgsea_rsq_path)) {
       stats <- setNames(gene_rsqs %>% pull(covariate), gene_rsqs$gene_symbol)
 
       # measure functional enrichment
-      gset_res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = FGSEA_NPROC) %>%
+      gset_res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = 1) %>%
         select(-leadingEdge) %>%
         arrange(padj)
 
+      message(sprintf("Finished measuring enrichment for MMRF / %s...", gene_set))
+
       cbind(covariate, gene_set, gset_res)
     }	
-
-    stopCluster(cl)
 
     fgsea_res <- do.call(rbind, cov_res)
 
     # store enrichment results
     message(sprintf("Saving %s", fgsea_rsq_path))
     write_csv(fgsea_res, fgsea_rsq_path)
+
+    stopCluster(cl)
   }	
 
   # functional enrichment for p-value columns
@@ -592,7 +598,7 @@ if (!file.exists(fgsea_rsq_path)) {
         stats <- setNames(gene_pvals %>% pull(covariate), gene_pvals$gene_symbol)
         
         # measure functional enrichment
-        res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = FGSEA_NPROC) %>%
+        res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = 1) %>%
           select(-leadingEdge) %>%
           arrange(padj)
 

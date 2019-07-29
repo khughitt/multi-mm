@@ -10,7 +10,7 @@ datasets.
 
 ```{r measure_missing_data}
 # number of missing values for each gene
-num_na <- apply(gene_weights, 1, function(x) { sum(is.na(x)) })
+num_na <- apply(gene_weights[, -1], 1, function(x) { sum(is.na(x)) })
 
 #table(num_na == 0)
 # 
@@ -55,7 +55,7 @@ for (infile in infiles) {
 
   # load expression data, collapse multi-mapped genes, and select subset genes
   dat <- read_csv(infile, col_types = cols()) %>%
-    select(-matches('ensgene')) %>%
+    select(-matches('ensgene'), -matches('probe_id')) %>%
     separate_rows(gene_symbol, sep = " ?//+ ?") %>%
     group_by(gene_symbol) %>%
     filter(!is.na(gene_symbol)) %>%
@@ -64,31 +64,31 @@ for (infile in infiles) {
     column_to_rownames('gene_symbol')
 
   # plot heatmap
-  aheatmap(log2(dat + 1), color = viridis(100), Rowv = FALSE, main = acc)
+  aheatmap(round(log2(dat + 1), 3), color = viridis(100), Rowv = FALSE, main = acc)
 }
 ```
 
 #### Gene expression correlation heatmap
 
-Below, average expression for the ~5,300 genes that are measured across all datasets 
+Next, average expression for the ~5,300 genes that are measured across all datasets 
 is compared across datasets. The total average expression within each dataset is
 normalized 
 
 ```{r}
 # get average expression for each dataset
 dat <- gene_stats %>%
-  select(ends_with('mean'))
+  select(gene_symbol, ends_with('mean')) %>%
+  column_to_rownames('gene_symbol')
 
 colnames(dat) <- sub('_mean', '', colnames(dat))
+
+# limit to genes measured in all datasets
+dat <- dat[rownames(dat) %in% complete_genes, ]
 
 # normalize totals across datasets
 dat <- sweep(dat, 2, colSums(dat), '/') * 1E6
 
-# limit to genes measured in all datasets
-dat <- dat %>%
-  filter(gene_symbol %in% complete_genes)
-
-cor_mat <- cor(dat)
+cor_mat <- round(cor(dat), 2)
 
 # dataset annotations
 annot_df <- datasets[match(colnames(dat), datasets$accession), ] %>%
@@ -112,33 +112,42 @@ aheatmap(cor_mat, color = viridis(100), Colv = FALSE, annRow = annot_df, annColo
 
 ### By gene standard deviation
 
+Comparison of gene standard deviations across datasets.
+
 ```{r sd_cor_mat}
 sd_dat <- gene_stats %>%
   select(matches('_sd$'))
 
-sd_cor_mat <- cor(sd_dat, use = 'pairwise.complete.obs')
+sd_cor_mat <- round(cor(sd_dat, use = 'pairwise.complete.obs'), 2)
 
 heatmaply(sd_cor_mat)
 ```
 
 #### By gene MAD
 
+Comparison of gene median absolute deviations across datasets.
+
 ```{r mad_cor_mat}
 mad_dat <- gene_stats %>%
   select(matches('_mad$'))
 
-mad_cor_mat <- cor(mad_dat, use = 'pairwise.complete.obs')
+mad_cor_mat <- round(cor(mad_dat, use = 'pairwise.complete.obs'), 2)
 
 heatmaply(mad_cor_mat)
 ```
 
 #### By gene dip statistic
 
+Comparison of gene dip statistics across datasets.
+
 ```{r dip_cor_mat}
 dip_dat <- gene_stats %>%
-  select(matches('_dip_stat$'))
+  select(ends_with('_dip_score'))
 
-dip_cor_mat <- cor(dip_dat, use = 'pairwise.complete.obs')
+# remove inf values (fixed upstream 2019/07/26...)
+dip_dat[dip_dat == Inf] <- 10
+
+dip_cor_mat <- round(cor(dip_dat, use = 'pairwise.complete.obs'), 2)
 
 heatmaply(dip_cor_mat)
 ```
@@ -219,85 +228,19 @@ ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
   theme_bw_high_res()
 ```
 
-### Multiple Myeloma Disease Stage
+### Covariate P-values
 
 ```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_stage', colnames(gene_pvals))
-
-dat <- gene_pvals[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
+dat <- gene_weights %>%
+  select(ends_with('_pval')) %>%
+  gather(key = covariate, value = pvalue) %>%
   na.omit
 
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
+ggplot(dat, aes(pvalue, group = covariate, fill = covariate, label = covariate)) +
   geom_density() +
   xlim(0, 1) +
-  facet_wrap(~dataset, scales = 'free_y') +
-  xlab("R^2 (Disease Stage)") +
+  facet_wrap(~covariate, scales = 'free_y') +
+  xlab("P-value") +
   theme_bw_high_res()
 ```
 
-### Multiple Myeloma Status
-
-```{r fig.width = 3, fig.height = 3}
-ind <- grepl('_status', colnames(gene_weights))
-
-dat <- gene_weights[, ind, drop = FALSE] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  xlim(0, 1) +
-  xlab("R^2 (Disease Status)") +
-  theme_bw_high_res()
-```
-
-### Multiple Myeloma Treatment Response
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_response', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  xlim(0, 1) +
-  facet_wrap(~dataset, scales = 'free_y') +
-  xlab("R^2 (Treatment Response)") +
-  theme_bw_high_res()
-```
-
-### Multiple Myeloma Survival (Cox statistic)
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_cox_stat', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  xlim(0, 30) +
-  facet_wrap(~dataset, scales = 'free_y') +
-  xlab("Cox statistic (Clipped)") +
-  theme_bw_high_res()
-```
-
-### Multiple Myeloma Survival (Cox P-value)
-
-```{r fig.width = 12, fig.height = 6}
-ind <- grepl('_cox_pval', colnames(gene_weights))
-
-dat <- gene_weights[, ind] %>%
-  gather(key = dataset, value = statistic) %>%
-  na.omit
-
-ggplot(dat, aes(statistic, group = dataset, fill = dataset, label = dataset)) +
-  geom_density() +
-  facet_wrap(~dataset, scales = 'free_y') +
-  xlab("Cox P-value") +
-  theme_bw_high_res()
-```

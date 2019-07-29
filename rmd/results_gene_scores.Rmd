@@ -1,129 +1,112 @@
-### Most informative genes
+### Compute gene weights
 
-#### All covariates (mean)
+Combine evidence from multiple datasets in a single gene-level score.
 
-```{r, fig.width = 6, fig.height = 6}
-ind <- match(rownames(covariate_dat), grch37$symbol)
+```{r results = 'asis', fig.width = 6, fig.height = 6}
+# create a dataframe with combined gene weights
+gene_pvals <- gene_weights %>%
+  select(ends_with('pval'))
 
-gene_scores <- data.frame(
-  gene = rownames(covariate_dat),
-  type = grch37$biotype[ind],
-  description = grch37$description[ind],
-  mean_score = rowSums(covariate_dat, na.rm = TRUE),
-  median_score = apply(covariate_dat, 1, median, na.rm = TRUE)
+# count number of missing values per gene
+num_missing <- apply(gene_pvals, 1, function(x) { sum(is.na(x)) })
+
+# compute -log10 of the median p-values for each gene
+median_pvals <- apply(gene_pvals, 1, function(x) {
+  -log10(median(x, na.rm = TRUE))
+})
+
+# create a dataframe to store combined gene scores
+gene_scores <- tibble(
+  symbol = gene_weights$gene_symbol,
+  score = median_pvals,
+  num_missing
 )
+
+# add metadata and sort
+gene_mdat <- grch37 %>%
+  select(symbol, biotype, description) %>%
+  group_by(symbol) %>%
+  slice(1)
 
 gene_scores <- gene_scores %>%
-  arrange(desc(median_score))
+  inner_join(gene_mdat, by = 'symbol') %>%
+  arrange(desc(score))
+
+#sum(is.na(gene_scores$score))
+# [1] 40
+
+# drop any genes with missing scores
+gene_scores <- gene_scores[!is.na(gene_scores$score), ]
+
+# create a version with outliers clipped for better visualizations
+gene_scores_clipped <- gene_scores %>%
+  filter(score < quantile(gene_scores$score, 0.99))
+
+ggplot(gene_scores_clipped, aes(x = score)) +
+  geom_density(alpha = 0.5)
+
+# scatter plot of # missing vs. scores
+set.seed(1)
+ind <- sample(nrow(gene_scores_clipped), 1000)
+
+ggplot(gene_scores_clipped[ind, ], aes(x = score, y = num_missing)) +
+  geom_point()
 
 # store gene scores
-write_csv(gene_scores, file.path(output_dir, 'final_weights_genes.csv'))
+write_csv(gene_scores, file.path(output_dir, 'combined', 'gene_weights.csv'))
+```
 
+### Top Genes
+
+```{r top_gene_scores, results = 'asis'}
 gene_scores %>% 
-  arrange(desc(mean_score)) %>%
   head(20) %>%
   kable
-```
-
-#### All covariates (median)
-
-```{r results = 'asis'}
-gene_scores %>% 
-  arrange(desc(median_score)) %>%
-  head(20) %>%
-  kable
-```
-
-#### Treatment covariates (mean)
-
-```{r, fig.width = 6, fig.height = 6}
-dat <- covariate_dat[, grepl('_response$', colnames(covariate_dat))]
-
-ind <- match(rownames(dat), grch37$symbol)
-
-treatment_gene_scores <- data.frame(
-  gene = rownames(dat),
-  type = grch37$biotype[ind],
-  description = grch37$description[ind],
-  mean_score = rowSums(dat, na.rm = TRUE),
-  median_score = apply(dat, 1, median, na.rm = TRUE)
-)
-
-treatment_gene_scores %>% 
-  arrange(desc(mean_score)) %>%
-  head(20) %>%
-  kable
-```
-
-#### Treatment covariates (median)
-
-```{r results = 'asis'}
-treatment_gene_scores %>% 
-  arrange(desc(median_score)) %>%
-  head(20) %>%
-  kable
-```
-
-#### Survival covariates (mean)
-
-```{r, fig.width = 6, fig.height = 6}
-dat <- covariate_dat[, grepl('_cox_|_died', colnames(covariate_dat))]
-
-ind <- match(rownames(dat), grch37$symbol)
-
-survival_gene_scores <- data.frame(
-  gene = rownames(dat),
-  type = grch37$biotype[ind],
-  description = grch37$description[ind],
-  mean_score = rowSums(dat, na.rm = TRUE),
-  median_score = apply(dat, 1, median, na.rm = TRUE)
-)
-
-survival_gene_scores %>% 
-  arrange(desc(mean_score)) %>%
-  head(20) %>%
-  kable
-```
-
-#### Survival covariates (median)
-
-```{r results = 'asis'}
-survival_gene_scores %>% 
-  arrange(desc(median_score)) %>%
-  head(20) %>%
-  kable
-```
-
-```{r}
-stopCluster(cl)
 ```
 
 #### Functional Enrichment (Gene Scores)
 
-```{r fgsea, results = 'asis', warnings = FALSE}
-gene_stats <- setNames(gene_scores$mean_score, gene_scores$gene)
+```{r fgsea, results = 'asis', warning = FALSE, message = FALSE}
+gene_stats <- setNames(gene_scores$score, gene_scores$symbol)
 
-res_all <- NULL
+fgsea_results <- NULL
 
-for (gs in names(gene_sets)) {
+for (gene_set in names(gene_sets)) {
   set.seed(1)
 
-	res <- fgsea(gene_sets[[gs]], gene_stats, nperm = 15000, nproc = MAX_THREADS) %>%
+  message(sprintf('Measuring enrichment for %s...', gene_set))
+
+	res <- fgsea(gene_sets[[gene_set]], gene_stats, nperm = FGSEA_NPERM, nproc = MAX_THREADS) %>%
 		select(-leadingEdge) %>%
 		arrange(padj)
-
-  res_all <- rbind(res_all, res)
 
   res_sig <- res %>%
     filter(padj < 0.05)
 
 	if (nrow(res_sig) > 0) {
-    cat(sprintf("\n##### %s (n = %d)\n", gs, nrow(res_sig)))
+    cat(sprintf("\n##### %s (n = %d)\n", gene_set, nrow(res_sig)))
 	  print(kable(head(res_sig, 20)))
+
+    fgsea_results <- rbind(fgsea_results, cbind(gene_set, res_sig))
 	}
 }
 
-cat(sprintf("##### Total: %d", nrow(res_all %>% filter(padj < 0.05))))
+fgsea_results <- fgsea_results %>%
+  arrange(padj)
 
-write_csv(res_all, 'output/fgsea_covariate_score_results_all.csv')
+cat(sprintf("- **Total Enriched**: %d\n", nrow(fgsea_results)))
+
+write_csv(fgsea_results, file.path(fgsea_dir, 'fgsea_covariate_score_results.csv'))
 ```
+
+#### Functional Enrichment - Top Collections (Gene Scores)
+
+```{r results='asis'}
+fgsea_results %>%
+  group_by(gene_set) %>%
+  summarize(n = n(), mean_pval = mean(padj)) %>%
+  arrange(desc(n)) %>%
+  kable
+```
+
+

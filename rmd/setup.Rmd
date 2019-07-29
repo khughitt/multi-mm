@@ -46,8 +46,9 @@ output_dir <- file.path(base_dir, 'output', VERSION)
 
 indiv_dir <- file.path(output_dir, 'individual')
 combined_dir <- file.path(output_dir, 'combined')
+fgsea_dir <- file.path(output_dir, 'fgsea')
 
-for (dir_ in c(indiv_dir, combined_dir)) {
+for (dir_ in c(indiv_dir, combined_dir, fgsea_dir)) {
   if (!dir.exists(dir_)) {
     dir.create(dir_, mode = '0755')
   }

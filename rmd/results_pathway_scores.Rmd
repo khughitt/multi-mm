@@ -1,6 +1,4 @@
-### Most informative gene sets
-
-#### All covariates (mean)
+### Most informative pathways / gene sets
 
 ```{r, fig.width = 6, fig.height = 6}
 ind <- match(rownames(covariate_dat), grch37$symbol)

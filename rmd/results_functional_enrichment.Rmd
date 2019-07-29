@@ -4,18 +4,21 @@
 
 ```{r fgsea_results, message = FALSE, results = 'asis'}
 # load fgsea results
-fgsea_res_all <- bind_rows(lapply(Sys.glob('output/fgsea_results_*'), read_csv))
+fgsea_res_all <- bind_rows(lapply(Sys.glob(file.path(output_dir, '*_fgsea_pval_results.csv')), read_csv))
 
 fgsea_res_all$dataset <- str_split(fgsea_res_all$covariate, '_', simplify = TRUE)[, 1] 
+
+fgsea_res_all <- fgsea_res_all %>%
+  select(dataset, everything())
 
 # number of datasets a pathway was found to be enriched for for at least one
 # covariate
 fgsea_res_datasets <- fgsea_res_all %>%
   filter(padj < 0.05) %>%
   group_by(dataset, gene_set, pathway) %>%
-  summarize(mean_padj = mean(padj), median_padj = median(padj)) %>%
+  summarize(mean_padj = mean(padj)) %>%
   group_by(gene_set, pathway) %>%
-  summarize(num_datasets = n(), mean_padj = mean(mean_padj), median_padj = median(median_padj)) %>%
+  summarize(num_datasets = n(), mean_padj = mean(mean_padj)) %>%
   arrange(desc(num_datasets))
 
 fgsea_res_datasets %>%
@@ -23,7 +26,7 @@ fgsea_res_datasets %>%
   kable
 ```
 
-#### Commonly enriched pathways / gene sets (# datasets/covariates)
+#### Commonly enriched pathways / gene sets (# covariates)
 
 ```{r results = 'asis'}
 # which pathways are enriched for the most datasets / covariates?
@@ -49,9 +52,9 @@ fgsea_res_covariates %>%
   kable
 ```
 
-#### Relationship between covariates and enrichment results
 
-```{r results = 'asis'}
+```{r results = 'asis', include = FALSE, eval = FALSE}
+#### Relationship between covariates and enrichment results
 # number of enriched annotations for each covariate assessed
 fgsea_summary <- fgsea_res_all %>% 
   filter(padj < 0.05) %>%
@@ -126,13 +129,13 @@ cor_mat <- gene_set_stats %>%
 
 diag(cor_mat) <- 0
 
-#cor_mat
+cor_mat
 #                num_gene_sets min_size max_size mean_size ratio_enriched
-# num_gene_sets         0.0000  -0.0833   0.6781   -0.0929        -0.1140
-# min_size             -0.0833   0.0000  -0.1100    0.6951         0.5800
-# max_size              0.6781  -0.1100   0.0000   -0.0444        -0.0639
-# mean_size            -0.0929   0.6951  -0.0444    0.0000         0.9171
-# ratio_enriched       -0.1140   0.5800  -0.0639    0.9171         0.0000
+# num_gene_sets         0.0000   -0.166   0.2609   -0.1673        -0.0238
+# min_size             -0.1656    0.000  -0.3509    0.5662        -0.6249
+# max_size              0.2609   -0.351   0.0000    0.0686        -0.0203
+# mean_size            -0.1673    0.566   0.0686    0.0000        -0.6438
+# ratio_enriched       -0.0238   -0.625  -0.0203   -0.6438         0.0000
 
 # larger gene sets are more likely to be enriched..
 cor(gene_set_stats$mean_size, gene_set_stats$ratio_enriched)
@@ -140,9 +143,9 @@ cor(gene_set_stats$mean_size, gene_set_stats$ratio_enriched)
 
 ```{r save_fgsea_summary_results}
 # save fgsea summary results
-write_csv(fgsea_res_all, 'output/fgsea_combined_results_all.csv')
-write_csv(fgsea_res_datasets, 'output/fgsea_combined_results_datasets.csv')
-write_csv(fgsea_res_covariates, 'output/fgsea_combined_results_covariates.csv')
-write_csv(fgsea_res_collections, 'output/fgsea_combined_results_collections.csv')
-write_csv(gene_set_stats, 'output/fgsea_combined_results_collections_stats.csv')
+write_csv(fgsea_res_all,         file.path(fgsea_dir, 'fgsea_combined_results_all.csv'))
+write_csv(fgsea_res_datasets,    file.path(fgsea_dir, 'fgsea_combined_results_datasets.csv'))
+write_csv(fgsea_res_covariates,  file.path(fgsea_dir, 'fgsea_combined_results_covariates.csv'))
+write_csv(fgsea_res_collections, file.path(fgsea_dir, 'fgsea_combined_results_collections.csv'))
+write_csv(gene_set_stats,        file.path(fgsea_dir, 'fgsea_combined_results_collections_stats.csv'))
 ```
