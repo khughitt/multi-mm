@@ -8,26 +8,10 @@ if (!file.exists(pathway_weights_file) || !file.exists(pathway_stats_file)) {
   # create variables to store result matrices
   pathway_weights <- NULL
 
-  # individual dataset rsquares / p-values
-  pathway_rsq_files <- Sys.glob(file.path(output_dir, '*_pathway_rsqs.csv'))
-  pathway_pval_files <- Sys.glob(file.path(output_dir, '*_pathway_pvals.csv'))
+  # individual dataset p-values
+  pathway_pval_files <- Sys.glob(file.path(pathway_pvals_dir, '*_pathway_pvals.csv'))
 
-  #accessions <- basename(str_match(pathway_rsq_files, '/(.*)_pathway_rsqs.csv')[, 2])
-
-  # load GEO and MMRF. datasets
-  for (infile in pathway_rsq_files) {
-    # load pathway expression data
-    dat <- read_csv(infile, col_types = cols())
-
-    # add to combined dataset
-    if (is.null(pathway_weights)) {
-      pathway_weights <- dat
-    } else {
-      pathway_weights <- pathway_weights %>%
-        full_join(dat, by = 'gene_set')
-    }
-  }
-
+  # load GEO and MMRF pathway-level data
   for (infile in pathway_pval_files) {
     # load pathway expression data
     dat <- read_csv(infile, col_types = cols())
@@ -37,12 +21,12 @@ if (!file.exists(pathway_weights_file) || !file.exists(pathway_stats_file)) {
       pathway_weights <- dat
     } else {
       pathway_weights <- pathway_weights %>%
-        full_join(dat, by = 'gene_set')
+        full_join(dat, by = c('collection', 'gene_set'))
     }
   }
 
   # create combined pathway expression statistics dataframe
-  pathway_stat_files <- Sys.glob(file.path(output_dir, '*_pathway_stats.csv'))
+  pathway_stat_files <- Sys.glob(file.path(pathway_stats_dir, '*_pathway_stats.csv'))
 
   pathway_stats <- NULL
 
@@ -55,7 +39,7 @@ if (!file.exists(pathway_weights_file) || !file.exists(pathway_stats_file)) {
       pathway_stats <- dat
     } else {
       pathway_stats <- pathway_stats %>%
-        full_join(dat, by = 'gene_set')
+        full_join(dat, by = c('collection', 'gene_set'))
     }
   }
 
@@ -66,87 +50,5 @@ if (!file.exists(pathway_weights_file) || !file.exists(pathway_stats_file)) {
   pathway_weights <- read_csv(pathway_weights_file, col_types = cols())
   pathway_stats <- read_csv(pathway_stats_file, col_types = cols())
 }
-```
-
-## Create custom gene set collections
-
-```{r save_custom_gene_sets}
-# sizes of custom gene set collections to create
-CUSTOM_GSET_SIZES <- c(10000, 5000, 1000, 500, 100, 50)
-
-# gene set <-> collection mapping
-gset_mapping <- NULL
-
-for (collection in names(gene_sets)) {
-  gset_mapping <- rbind(gset_mapping, cbind(collection, names(gene_sets[[collection]])))
-}
-
-colnames(gset_mapping) <- c('collection', 'gene_set')
-
-gset_mapping <- as.data.frame(gset_mapping)
-
-#table(duplicated(gset_mapping$gene_set)) 
-# 
-# FALSE  TRUE 
-# 50229 10385 
-
-# Note: to handle duplicated gene sets for now, we will just choose one at random.
-# in the future the pathway expression, etc. will include both the collection and
-# gene set names to avoid confusion.
-
-gset_mapping <- gset_mapping %>%
-  group_by(gene_set) %>%
-  slice(1) %>%
-  ungroup %>%
-  as.data.frame
-
-top_pathways <- pathway_weights %>%
-  select(gene_set, ends_with('_pval'))
-
-# add average p-values
-top_pathways$mean_pval <- apply(top_pathways[, -1], 1, mean, na.rm = TRUE)
-
-top_pathways <- top_pathways %>%
-  arrange(mean_pval)
-
-# gene sets to include
-custom_gsets <- fgsea_results %>%
-  select(gene_set, pathway) %>%
-  head(MAX_CUSTOM_GSET_SIZE)
-
-# dataframe to store gmt output; the largest gene set encountered so far has
-# ~17,500 genes (Jensen Tissues collection)
-res <- matrix("", nrow = 10000, ncol = 18000)
-
-# keep track of the largest gene set to be included below
-largest_gset <- 0
-
-# indices / offsets
-#GMT_FIRST_GENE_IND <- 3
-
-# iterate over top gene sets and add to custom GMT file
-for (i in 1:nrow(custom_gsets)) {
-  collection <- custom_gsets[i, 'gene_set'] 
-  pathway    <- custom_gsets[i, 'pathway'] 
-
-  # get genes in gene set
-  genes <- gene_sets[[collection]][[pathway]]
-
-  if (length(genes) > largest_gset) {
-    largest_gset <- length(genes)
-  }
-
-  res[i, 1:(2 + length(genes))] <- c(pathway, collection, genes)
-}
-
-# iterate over entries and write to file
-outfile <- file.path(output_dir, 'custom_gene_sets_10000.gmt')
-
-output <- apply(res, 1, function(x) { 
-  x <- x[x != '']
-  paste(x, collapse = '\t')
-})
-
-write(output, file = outfile)
 ```
 

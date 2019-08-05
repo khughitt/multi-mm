@@ -3,24 +3,15 @@
 ```{r process_mmrf_commpass_data}
 # mmrf gene weights output filepath
 gene_expr_path     <- file.path(mmrf_dir, 'rnaseq/MMRF_CoMMpass_IA13a_E74GTF_HtSeq_Gene_Counts.txt.gz')
-pathway_expr_path  <- file.path(mmrf_dir, sprintf('rnaseq/MMRF_CoMMpass_IA13a_E74GTF_HtSeq_Pathway_Expr_%s.txt.gz', PATHWAY_AGG_FUNC))
 
 mmrf_clin_metadata <- file.path(mmrf_dir, 'clinical_data_tables', 'MMRF_CoMMpass_IA13_PER_PATIENT.csv')
 mmrf_trmt_metadata <- file.path(mmrf_dir, 'clinical_data_tables', 'MMRF_CoMMpass_IA13_STAND_ALONE_TRTRESP.csv')
 mmrf_surv_metadata <- file.path(mmrf_dir, 'clinical_data_tables/MMRF_CoMMpass_IA13_STAND_ALONE_SURVIVAL.csv')
 
-gene_stats_path    <- file.path(output_dir, 'MMRF13a_gene_stats.csv')
-gene_rsqs_path     <- file.path(output_dir, 'MMRF13a_gene_rsqs.csv')
-gene_pvals_path    <- file.path(output_dir, 'MMRF13a_gene_pvals.csv')
+gene_stats_path    <- file.path(gene_stats_dir, 'MMRF13a_gene_stats.csv')
+gene_pvals_path    <- file.path(gene_pvals_dir, 'MMRF13a_gene_pvals.csv')
 
-pathway_stats_path <- file.path(output_dir, 'MMRF13a_pathway_stats.csv')
-pathway_rsqs_path  <- file.path(output_dir, 'MMRF13a_pathway_rsqs.csv')
-pathway_pvals_path <- file.path(output_dir, 'MMRF13a_pathway_pvals.csv')
-
-fgsea_rsq_path     <- file.path(output_dir, 'MMRF13a_fgsea_rsq_results.csv')
-fgsea_pval_path    <- file.path(output_dir, 'MMRF13a_fgsea_pval_results.csv')
-
-stats_avail <- all(file.exists(gene_stats_path, pathway_stats_path))
+fgsea_pval_path    <- file.path(fgsea_dir, 'MMRF13a_fgsea_pval_results.csv')
 ```
 
 ```{r load_mmrf_data, message = FALSE}
@@ -74,72 +65,9 @@ gene_expr <- gene_expr %>%
   select(gene_symbol, everything())
 ```
 
-```{r create_pathway_aggregated_counts, message = FALSE}
-if (!file.exists(pathway_expr_path)) {
-  message("Measuring pathway expression for MMRF...")
-
-  # collapse multi-mapped gene symbols
-  gene_expr_nr <- gene_expr %>%
-    group_by(gene_symbol) %>%
-    summarize_all(sum) %>%
-    ungroup
-
-  # create paralellization handler
-  cl <- makeCluster(MAX_THREADS, outfile='')
-  registerDoParallel(cl)
-
-  # aggregate MMRF gene expression data
-  res <- foreach(gset_num = 1:length(gene_sets), .packages = c('dplyr')) %dopar% {
-    collection = names(gene_sets)[gset_num]
-
-    pathway_expr <- NULL
-
-    message(sprintf("[%d / %d] Measuring pathway expression for MMRF13a (%s)...", 
-                  gset_num, length(gene_sets), collection))
-    
-    for (gset in names(gene_sets[[collection]])) {
-      dat_gset <- gene_expr_nr %>%
-        filter(gene_symbol %in% gene_sets[[collection]][[gset]])
-
-      # if no genes from gene set were found, continue to next gene set
-      if (nrow(dat_gset) == 0) {
-        return(NULL)
-      }
-
-      # add pathway-level expression data
-      pathway_expr <- rbind(pathway_expr, apply(dat_gset[, -1], 2, PATHWAY_AGG_FUNC, na.rm = TRUE))
-      rownames(pathway_expr)[nrow(pathway_expr)] <- gset
-    }
-
-    message(sprintf("[%d / %d] Finished measuring pathway expression for MMRF13a (%s)...", 
-                  gset_num, length(gene_sets), collection))
-
-    pathway_expr
-  }
-
-  stopCluster(cl)
-
-  # combine pathway-projected expression data
-  pathway_expr <- do.call(rbind, res)
-
-  # drop any rows with zero variance (uninformative)
-  mask <- apply(pathway_expr, 1, var, na.rm = TRUE) > 0
-  pathway_expr <- pathway_expr[mask, ]
-
-  pathway_expr <- pathway_expr %>%
-    as.data.frame %>%
-    rownames_to_column('gene_set')
-
-  write_tsv(pathway_expr, pathway_expr_path)
-} else {
-  # if pathway-level expression data exists, load from file
-  pathway_expr <- read_tsv(pathway_expr_path, col_types = cols())
-}
-```
-
 #### MMRF CoMMpass Clinical Variables
 
-```{r load_mmrf_patient_clinical_metadata, eval = !stats_avail, message = FALSE}
+```{r load_mmrf_patient_clinical_metadata, eval = !file.exists(gene_stats_path), message = FALSE}
 # load patient clinical metadata
 mmrf_clin <- read_csv(mmrf_clin_metadata, col_types = cols()) %>%
   select(public_id = PUBLIC_ID, iss_stage = R_ISS, ecog, mm_status = D_PT_mmstatus)
@@ -155,12 +83,7 @@ mmrf_clin <- mmrf_clin[match(colnames(gene_expr_raw)[-1], mmrf_clin$public_id), 
 #gene_weights <- data.frame(ensgene = gene_expr$gene_symbol)
 #colnames(gene_expr)[1] <- 'ensgene'
 
-gene_rsqs     <- gene_expr[, 1, drop = FALSE]
 gene_pvals    <- gene_expr[, 1, drop = FALSE]
-
-pathway_stats <- pathway_expr[, 1, drop = FALSE]
-pathway_rsqs  <- pathway_expr[, 1, drop = FALSE]
-pathway_pvals <- pathway_expr[, 1, drop = FALSE]
 
 output_cols <- c()
 
@@ -189,7 +112,7 @@ for (covariate in c('iss_stage', 'ecog', 'mm_status')) {
 
     #res_genes <- parApply(cl, as.matrix(gene_expr[, -1]), 1, function(x) {
     #for (i in 1:nrow(gene_expr)) {
-    gene_res <- parApply(cl, as.matrix(gene_expr[, -1]), 1, function(x) {
+    dataset_gene_pvals <- parApply(cl, as.matrix(gene_expr[, -1]), 1, function(x) {
       mod <- glm(response ~ x, family = "binomial")
 
       GLM_PVAL_ROW_IND <- 2
@@ -200,66 +123,28 @@ for (covariate in c('iss_stage', 'ecog', 'mm_status')) {
       coefs <- coef(summary(mod))
 
       if (all(dim(coefs) == c(2, 4))) {
-        pval <- coefs[GLM_PVAL_ROW_IND, GLM_PVAL_COL_IND]
+        coefs[GLM_PVAL_ROW_IND, GLM_PVAL_COL_IND]
       } else {
-        pval <- 1
+        1
       }
-
-      rsq <- max(as.numeric(1 - logLik(mod) / logLik(null)), 0)
-
-      c(rsq, pval)
-    })
-
-    pathway_res <- parApply(cl, as.matrix(pathway_expr[, -1]), 1, function(x) {
-      mod <- glm(response ~ x, family = "binomial")
-
-      GLM_PVAL_ROW_IND <- 2
-      GLM_PVAL_COL_IND <- 4
-
-      # in some cases (e.g. when x contains mostly 0's), fit will only include an
-      # intercept term, making it necessary to check the coef dimensions
-      coefs <- coef(summary(mod))
-
-      if (all(dim(coefs) == c(2, 4))) {
-        pval <- coefs[GLM_PVAL_ROW_IND, GLM_PVAL_COL_IND]
-      } else {
-        pval <- 1
-      }
-
-      rsq <- max(as.numeric(1 - logLik(mod) / logLik(null)), 0)
-
-      c(rsq, pval)
     })
 
     stopCluster(cl)
 
-    dataset_gene_rsqs  <- gene_res[1, ]
-    dataset_gene_pvals <- gene_res[2, ]
-    dataset_pathway_rsqs  <- pathway_res[1, ]
-    dataset_pathway_pvals <- pathway_res[2, ]
-
     # append to result dataframes and update column names
-    gene_rsqs    <- cbind(gene_rsqs, dataset_gene_rsqs)
-    pathway_rsqs <- cbind(pathway_rsqs, dataset_pathway_rsqs)
-
     gene_pvals    <- cbind(gene_pvals, dataset_gene_pvals)
-    pathway_pvals <- cbind(pathway_pvals, dataset_pathway_pvals)
 
     # column name to use in output
-    rsq_cname  <- make.names(sprintf("MMRF13a_%s_rsq", covariate))
     pval_cname <- make.names(sprintf("MMRF13a_%s_pval", covariate))
 
-    colnames(gene_rsqs)[ncol(gene_rsqs)]       <- rsq_cname
-    colnames(pathway_rsqs)[ncol(pathway_rsqs)] <- rsq_cname
     colnames(gene_pvals)[ncol(gene_pvals)]       <- pval_cname
-    colnames(pathway_pvals)[ncol(pathway_pvals)] <- pval_cname
   }
 }
 ```
 
 #### MMRF CoMMpass Treatment Variables
 
-```{r load_mmrf_patient_treatment_metadata, eval = !stats_avail, message = FALSE}
+```{r load_mmrf_patient_treatment_metadata, eval = !file.exists(gene_stats_path), message = FALSE}
 # load patient treatment metadata
 mmrf_treatment <- read_csv(mmrf_trmt_metadata, col_types = cols())
 
@@ -305,10 +190,6 @@ for (treatment in treatments) {
   gene_expr_mat <- as.matrix(gene_expr[, -1])
   gene_expr_mat <- gene_expr_mat[, mmrf_treatment_subset$public_id]
 
-  # create versions without the id columns
-  pathway_expr_mat <- as.matrix(pathway_expr[, -1])
-  pathway_expr_mat <- pathway_expr_mat[, mmrf_treatment_subset$public_id]
-
   # best response also explored, but r^2 for first response generally found to be
   # better.. 
   covariate <- 'first_response'
@@ -338,59 +219,32 @@ for (treatment in treatments) {
 
     clusterExport(cl, c('response', 'null', 'GLM_PVAL_ROW_IND', 'GLM_PVAL_COL_IND'))
 
-    gene_res <- parApply(cl, gene_expr_mat, 1, function(x) {
+    dataset_gene_pvals <- parApply(cl, gene_expr_mat, 1, function(x) {
       mod <- glm(response ~ x, family = "binomial")
-      rsq <- as.numeric(1 - logLik(mod) / logLik(null))
 
       # in some cases (e.g. when x contains mostly 0's), fit will only include an
       # intercept term, making it necessary to check the coef dimensions
       coefs <- coef(summary(mod))
 
       if (all(dim(coefs) == c(2, 4))) {
-        pval <- coefs[GLM_PVAL_ROW_IND, GLM_PVAL_COL_IND]
+        coefs[GLM_PVAL_ROW_IND, GLM_PVAL_COL_IND]
       } else {
-        pval <- 1
+        1
       }
-      c(rsq, pval)
-    })
-
-    pathway_res <- parApply(cl, pathway_expr_mat, 1, function(x) {
-      mod <- glm(response ~ x, family = "binomial")
-      rsq <- as.numeric(1 - logLik(mod) / logLik(null))
-
-      # in some cases (e.g. when x contains mostly 0's), fit will only include an
-      # intercept term, making it necessary to check the coef dimensions
-      coefs <- coef(summary(mod))
-
-      if (all(dim(coefs) == c(2, 4))) {
-        pval <- coefs[GLM_PVAL_ROW_IND, GLM_PVAL_COL_IND]
-      } else {
-        pval <- 1
-      }
-      c(rsq, pval)
     })
 
     stopCluster(cl)
 
     # save results
-    gene_rsqs <- cbind(gene_rsqs, gene_res[1, ])
-    gene_pvals <- cbind(gene_pvals, gene_res[2, ])
-
-    pathway_rsqs <- cbind(pathway_rsqs, pathway_res[1, ])
-    pathway_pvals <- cbind(pathway_pvals, pathway_res[2, ])
-
-    colnames(gene_rsqs)[ncol(gene_rsqs)] <- make.names(sprintf('MMRF13a_%s_rsq', treatment))
+    gene_pvals    <- cbind(gene_pvals, dataset_gene_pvals)
     colnames(gene_pvals)[ncol(gene_pvals)] <- make.names(sprintf('MMRF13a_%s_pval', treatment))
-
-    colnames(pathway_rsqs)[ncol(pathway_rsqs)] <- make.names(sprintf('MMRF13a_%s_rsq', treatment))
-    colnames(pathway_pvals)[ncol(pathway_pvals)] <- make.names(sprintf('MMRF13a_%s_pval', treatment))
   }
 }
 ```
 
 #### MMRF CoMMpass Survival Variables
 
-```{r load_mmrf_patient_survival_metadata, eval = !stats_avail, message = FALSE}
+```{r load_mmrf_patient_survival_metadata, eval = !file.exists(gene_stats_path), message = FALSE}
 # load patient survival metadata
 # regular and censored overall & progression-free survival
 mmrf_surv <- read_csv(mmrf_surv_metadata, col_types = cols())
@@ -423,33 +277,18 @@ gene_fits <- parApply(cl, as.matrix(gene_expr[, -1]), 1, function(x) {
   summary(survival::coxph(survival::Surv(mmrf_surv$pfscdy, mmrf_surv$censpfs) ~ x))
 })
 
-pathway_fits <- parApply(cl, as.matrix(pathway_expr[, -1]), 1, function(x) {
-  summary(survival::coxph(survival::Surv(mmrf_surv$pfscdy, mmrf_surv$censpfs) ~ x))
-})
-
 # Cox regression Wald P-value
 gene_wald_pvals <- as.numeric(unlist(lapply(gene_fits, function(x) {
-  x$waldtest['pvalue']
-})))
-
-pathway_wald_pvals <- as.numeric(unlist(lapply(pathway_fits, function(x) {
   x$waldtest['pvalue']
 })))
 
 # In a few cases (~20/55000), NA values may be generated in the above; for convenience,
 # we set these to "1"
 gene_wald_pvals[is.na(gene_wald_pvals)] <- 1
-pathway_wald_pvals[is.na(pathway_wald_pvals)] <- 1
-
 gene_pvals <- cbind(gene_pvals, MMRF13a_pfs_cox_pval = gene_wald_pvals)
-pathway_pvals <- cbind(pathway_pvals, MMRF13a_pfs_cox_pval = pathway_wald_pvals)
 
 # overall survival
 gene_fits <- parApply(cl, as.matrix(gene_expr[, -1]), 1, function(x) {
-  summary(survival::coxph(survival::Surv(mmrf_surv$oscdy, mmrf_surv$censos) ~ x))
-})
-
-pathway_fits <- parApply(cl, as.matrix(pathway_expr[, -1]), 1, function(x) {
   summary(survival::coxph(survival::Surv(mmrf_surv$oscdy, mmrf_surv$censos) ~ x))
 })
 
@@ -460,25 +299,14 @@ gene_wald_pvals <- as.numeric(unlist(lapply(gene_fits, function(x) {
   x$waldtest['pvalue']
 })))
 
-pathway_wald_pvals <- as.numeric(unlist(lapply(pathway_fits, function(x) {
-  x$waldtest['pvalue']
-})))
-
 #sum(is.na(gene_wald_pvals))
 # [1] 6
 
-#sum(is.na(pathway_wald_pvals))
-# [1] 0
-
 # replace missing values
 gene_wald_pvals[is.na(gene_wald_pvals)] <- 1
-pathway_wald_pvals[is.na(pathway_wald_pvals)] <- 1
-
-
 gene_pvals    <- cbind(gene_pvals, MMRF13a_os_cox_pval = gene_wald_pvals)
-pathway_pvals <- cbind(pathway_pvals, MMRF13a_os_cox_pval = pathway_wald_pvals)
 
-# compute gene-, probe-, or pathway-wise distribution statistics
+# compute gene-, probe-wise distribution statistics
 gene_stats <- data.frame(
   'gene_symbol'      = gene_expr$gene_symbol,
   'MMRF13a_mean'     = apply(as.matrix(gene_expr[, -1]), 1, mean),
@@ -489,38 +317,17 @@ gene_stats <- data.frame(
   'MMRF13a_kurtosis' = apply(as.matrix(gene_expr[, -1]), 1, kurtosis)
 )
 
-pathway_stats <- data.frame(
-  'gene_set'         = pathway_expr$gene_set,
-  'MMRF13a_mean'     = apply(as.matrix(pathway_expr[, -1]), 1, mean),
-  'MMRF13a_median'   = apply(as.matrix(pathway_expr[, -1]), 1, median),
-  'MMRF13a_sd'       = apply(as.matrix(pathway_expr[, -1]), 1, sd),
-  'MMRF13a_var'      = apply(as.matrix(pathway_expr[, -1]), 1, var),
-  'MMRF13a_mad'      = apply(as.matrix(pathway_expr[, -1]), 1, mad),
-  'MMRF13a_kurtosis' = apply(as.matrix(pathway_expr[, -1]), 1, kurtosis)
-)
-
 gene_dip <- apply(as.matrix(gene_expr[, -1]), 1, dip.test)
 
 dip_pvals <- unlist(lapply(gene_dip, function(x) { x$p.val }))
 gene_stats$MMRF13a_dip_score <- -log10(pmax(MIN_PVAL, dip_pvals))
 
-pathway_dip <- apply(as.matrix(pathway_expr[, -1]), 1, dip.test)
-
-dip_pvals <- unlist(lapply(pathway_dip, function(x) { x$p.val }))
-pathway_stats$MMRF13a_dip_score <- -log10(pmax(MIN_PVAL, dip_pvals))
-
 #
 # next, collapse multi-mapped genes using the follow rules:
 #
 # p-values: keep min p-value
-# rsquares: keep max rsquare
 # stats   : keep average statistic
 #
-
-# rsquared values (use max)
-gene_rsqs <- gene_rsqs %>%
-  group_by(gene_symbol) %>%
-  summarise_all(max)
 
 # p-values (use min)
 gene_pvals <- gene_pvals %>%
@@ -535,90 +342,41 @@ gene_stats <- gene_stats %>%
 # save results
 
 write_csv(gene_stats, gene_stats_path)
-write_csv(gene_rsqs, gene_rsqs_path)
 write_csv(gene_pvals, gene_pvals_path) 
-
-write_csv(pathway_stats, pathway_stats_path)
-write_csv(pathway_pvals, pathway_pvals_path)
-write_csv(pathway_rsqs,  pathway_rsqs_path)
 ```
 
-```{r mmrf_functional_enrichment, warnings = FALSE, eval = !stats_avail}
+```{r mmrf_functional_enrichment, warnings = FALSE, eval = !file.exists(gene_stats_path)}
 # perform functional enrichment on gene-level results
-if (!file.exists(fgsea_rsq_path)) {
+if (!file.exists(fgsea_pval_path)) {
   fgsea_res <- NULL
 
-  # measure enrichment for categorical covariates (R^2 scores)
-  for (covariate in colnames(gene_rsqs)[-1]) {
-    message(sprintf("Measuring functional enrichment for MMRF IA13a / %s (rsquares)", covariate)) 
+  message(sprintf("Measuring functional enrichment for MMRF IA13a... (pvalues)"))
 
-    # create paralellization handler
-    cl <- makeCluster(MAX_THREADS, outfile='')
-    registerDoParallel(cl, cores = MAX_THREADS)
+  # measure enrichment for covariate p-values
+  for (covariate in colnames(gene_pvals)[-1]) {
+    message(sprintf("Measuring functional enrichment for %s / MMRF IA13a", covariate)) 
 
-    cov_res <- foreach(gene_set = names(gene_sets), .packages = c('fgsea', 'dplyr')) %dopar% {
+    for (gene_set in names(gene_sets)) {
       set.seed(1)
 
-      message(sprintf("Measuring enrichment for MMRF / %s", gene_set))
-
-      stats <- setNames(gene_rsqs %>% pull(covariate), gene_rsqs$gene_symbol)
-
+      stats <- setNames(gene_pvals %>% pull(covariate), gene_pvals$gene_symbol)
+      
       # measure functional enrichment
-      gset_res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = 1) %>%
+      res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = 1) %>%
         select(-leadingEdge) %>%
         arrange(padj)
 
-      message(sprintf("Finished measuring enrichment for MMRF / %s...", gene_set))
-
-      cbind(covariate, gene_set, gset_res)
-    }	
-
-    fgsea_res <- do.call(rbind, cov_res)
-
-    # store enrichment results
-    message(sprintf("Saving %s", fgsea_rsq_path))
-    write_csv(fgsea_res, fgsea_rsq_path)
-
-    stopCluster(cl)
+      fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
+    }
   }	
 
-  # functional enrichment for p-value columns
-  if (!file.exists(fgsea_pval_path)) {
-    fgsea_res <- NULL
-
-    message(sprintf("Measuring functional enrichment for MMRF IA13a... (pvalues)"))
-
-    # measure enrichment for covariate p-values
-    for (covariate in colnames(gene_pvals)[-1]) {
-      message(sprintf("Measuring functional enrichment for %s / MMRF IA13a", covariate)) 
-
-      for (gene_set in names(gene_sets)) {
-        set.seed(1)
-
-        stats <- setNames(gene_pvals %>% pull(covariate), gene_pvals$gene_symbol)
-        
-        # measure functional enrichment
-        res <- fgsea(gene_sets[[gene_set]], stats, nperm = FGSEA_NPERM, nproc = 1) %>%
-          select(-leadingEdge) %>%
-          arrange(padj)
-
-        fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
-      }
-    }	
-
-    # store enrichment results
-    message(sprintf("Saving %s", fgsea_pval_path))
-    write_csv(fgsea_res, fgsea_pval_path)
-  }
+  # store enrichment results
+  message(sprintf("Saving %s", fgsea_pval_path))
+  write_csv(fgsea_res, fgsea_pval_path)
 }
 
-stopCluster(cl)
-
 # clean up
-rm(gene_expr, pathway_expr, gene_expr_raw)
+rm(gene_expr, gene_expr_raw)
 suppressMessages(gc())
-
-# store enrichment results
-write_csv(fgsea_res, fgsea_rsq_path)
 ```
 

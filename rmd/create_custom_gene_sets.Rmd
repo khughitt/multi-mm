@@ -1,0 +1,60 @@
+## Create custom gene set collections
+
+```{r save_custom_gene_sets}
+# sizes of custom gene set collections to create
+CUSTOM_GSET_SIZES <- c(10000, 5000, 1000, 500, 100, 50)
+MAX_CUSTOM_GSET_SIZE <- max(CUSTOM_GSET_SIZES)
+
+top_pathways <- pathway_weights %>%
+  select(collection, gene_set, ends_with('_pval'))
+
+# compute mean -log10 p-value scores
+ID_IND <- 1:2
+
+log10_score_func <- function(x) {
+  mean(-log10(x), na.rm = TRUE)
+}
+
+top_pathways$mean_log10_pval <- apply(top_pathways[, -ID_IND], 1, log10_score_func)
+
+top_pathways <- top_pathways %>%
+  arrange(desc(mean_log10_pval))
+
+# gene sets to include
+custom_gsets <- top_pathways %>%
+  select(collection, gene_set) %>%
+  head(MAX_CUSTOM_GSET_SIZE)
+
+# dataframe to store gmt output; the largest gene set encountered so far has
+# ~17,500 genes (Jensen Tissues collection)
+res <- matrix("", nrow = 10000, ncol = 18000)
+
+# iterate over top gene sets and add to custom GMT file
+for (i in 1:nrow(custom_gsets)) {
+  collection <- as.character(custom_gsets[i, 'collection'])
+  gene_set   <- as.character(custom_gsets[i, 'gene_set'])
+
+  # get genes in gene set
+  genes <- gene_sets[[collection]][[gene_set]]
+
+  res[i, 1:(2 + length(genes))] <- c(gene_set, collection, genes)
+}
+
+# check to make sure gene sets all found
+if (!all(custom_gsets$gene_set %in% unlist(lapply(gene_sets, names)))) {
+  stop("gene set name mismatch!")
+}
+
+# iterate over entries and write to file
+for (num_gene_sets in CUSTOM_GSET_SIZES) {
+  outfile <- file.path(gset_dir, sprintf('custom_gene_sets_%d.gmt', num_gene_sets))
+
+  output <- apply(res[1:num_gene_sets, ], 1, function(x) { 
+    x <- x[x != '']
+    paste(x, collapse = '\t')
+  })
+
+  write(output, file = outfile)
+}
+```
+

@@ -1,0 +1,236 @@
+## Load GEO Data
+
+```{r parse_geo_datasets, message = FALSE, warning = FALSE}
+# create paralellization handler
+cl <- makeCluster(MAX_THREADS, outfile='')
+registerDoParallel(cl)
+
+#for (acc in accessions) {
+tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 'tidyverse', 'survival')) %dopar% {
+  # load gene expression data
+  data_dir <- file.path(geo_dir, acc, 'processed')
+
+  # filenames
+  gene_expr_infile    <- file.path(data_dir, sprintf("%s_gene_expr.csv", acc))
+  pathway_expr_infile <- file.path(data_dir, sprintf("%s_pathway_expr_%s.csv", acc,
+                                                     PATHWAY_AGG_FUNC))
+  mdat_infile         <- file.path(data_dir, sprintf("%s_sample_metadata.csv", acc))
+
+  # pathway-level expression statistics (mean, median, variance, etc.)
+  pathway_stats_outfile <- file.path(pathway_stats_dir, sprintf('%s_pathway_stats.csv', acc))
+
+  # pathway-level covariate p-values
+  pathway_pvals_outfile <- file.path(pathway_pvals_dir, sprintf('%s_pathway_pvals.csv', acc))
+
+  # if dataset has already been completely processed, skip 
+	if (file.exists(pathway_stats_outfile)) {
+		message(sprintf("Skipping %s; output already exists...", acc))
+    return(NULL)
+	}
+
+  # if data is missing, skip
+  if (!file.exists(gene_expr_infile)) {
+		message(sprintf("Skipping %s; data unavailable...", acc))
+    return(NULL)
+  }
+
+  message(sprintf("Processing dataset %s", acc))
+
+  # otherwise load gene expression data and sample metadata and compute weights
+  gene_expr <- read_csv(gene_expr_infile, col_types = cols())
+
+	# exclude any entries which couldn't be mapped to any gene symbols
+	gene_expr <- gene_expr[!is.na(gene_expr$gene_symbol), ]	
+
+  # drop probe_id / ensgene column; only gene_symbol needed
+  gene_expr <- gene_expr[, !colnames(gene_expr) %in% c('probe_id', 'ensgene')]
+
+  # create a "non-redundant" version of the gene expression data by collapsing
+  # multi-mapped genes, if present; dividers used are either "//" or "///", possibly
+  # including a space on either space.
+
+  # create a pathway / gene set-projected version of expression data
+  if (!file.exists(pathway_expr_infile)) {
+    pathway_expr <- NULL
+
+    # note for gene-wise covariate associations, we want to hold off on this step until
+    # after all correlations have been measured; this way we man keep the min/max value
+    # observed for each gene.
+    gene_expr_nr <- gene_expr %>%
+      separate_rows(gene_symbol, sep = " ?//+ ?") %>%
+      group_by(gene_symbol) %>%
+      summarize_all(sum)
+
+    for (gset_num in 1:length(gene_sets)) {
+      collection <- names(gene_sets)[gset_num]
+
+      message(sprintf("[%d / %d] Measuring pathway expression for %s (%s)...", 
+                      gset_num, length(gene_sets), acc, collection))
+
+      for (gset in names(gene_sets[[collection]])) {
+
+        dat_gset <- gene_expr_nr %>%
+          filter(gene_symbol %in% gene_sets[[collection]][[gset]])
+
+        # if no genes from gene set were found, continue to next gene set
+        if (nrow(dat_gset) == 0) {
+          next
+        }
+
+        # add pathway-level expression data and fix rowname
+        expr <- apply(dat_gset[, -1], 2, PATHWAY_AGG_FUNC, na.rm = TRUE)
+        pathway_expr <- rbind(pathway_expr, c(collection, gset, expr))
+      }
+    }
+
+    # pathway expression dataframe column indices
+    PATHWAY_ID_IND   <- 1:2
+    PATHWAY_EXPR_IND <- 3:ncol(pathway_expr)
+
+    # convert to a dataframe and update colnames
+    pathway_expr <- as.data.frame(pathway_expr)
+    colnames(pathway_expr) <- c('collection', 'gene_set', colnames(pathway_expr)[PATHWAY_EXPR_IND])
+
+    # drop any rows with zero variance (uninformative)
+    mask <- apply(pathway_expr[, PATHWAY_EXPR_IND], 1, var, na.rm = TRUE) > 0
+
+    #table(mask)
+    # mask
+    # FALSE  TRUE 
+    #    14 60597 
+
+    pathway_expr <- pathway_expr[mask, ]
+
+    message(sprintf("Finished measuring pathway expression for %s...", acc))
+
+    write_csv(pathway_expr, pathway_expr_infile)
+  } else {
+    # if pathway-level expression data exists, load from file
+    pathway_expr <- read_csv(pathway_expr_infile, col_types = cols())
+
+    # pathway expression dataframe column indices
+    PATHWAY_ID_IND   <- 1:2
+    PATHWAY_EXPR_IND <- 3:ncol(pathway_expr)
+  }
+
+  # create version without the id columns, for convenience
+  pathway_expr_mat <- pathway_expr[, PATHWAY_EXPR_IND]
+
+  # load sample metadata
+  mdat <- read.csv(mdat_infile)
+
+  # generate pathway-level weights and expression statistics
+  if (!file.exists(pathway_stats_outfile)) {
+    # initialize result variables; creates dataframes with only the pathway identifiers
+    pathway_stats <- pathway_expr[, PATHWAY_ID_IND, drop = FALSE]
+    pathway_pvals <- pathway_expr[, PATHWAY_ID_IND, drop = FALSE]
+
+    # measure correlation or pseudo R^2 between each pathway and each factor covariate
+    if (acc %in% names(factor_covariates)) {
+      # iterate over factor covariates
+      for (covariate in factor_covariates[[acc]]) {
+        message(sprintf("Processing %s / %s (pathways)", acc, covariate))
+
+        # get covariate column as a vector
+        response <- mdat[, covariate]
+
+        # for factor columns, compute R^2 for a logit predicting the factor level
+        if (is.character(response) || length(unique(response)) < 10) {
+          response <- factor(response)
+
+          # multinomial logistic regression
+          null <- glm(response ~ 1, family="binomial")
+
+          # pathway-level statistics;
+          pvals <- apply(pathway_expr_mat, 1, function(x) {
+            mod <- glm(response ~ x, family = "binomial")
+
+            # in some cases (e.g. when x contains mostly 0's), fit will only include an
+            # intercept term, making it necessary to check the coef dimensions
+            coefs <- coef(summary(mod))
+
+            if (all(dim(coefs) == c(2, 4))) {
+              coefs[GLM_PVAL_ROW_IND, GLM_PVAL_COL_IND]
+            } else {
+              1
+            }
+          })
+        }
+
+        # append to result dataframes and update column names
+        pathway_pvals <- cbind(pathway_pvals, pvals)
+
+        # column name to use in output
+        pval_cname <- make.names(sprintf("%s_%s_pval", acc, covariate))
+
+        colnames(pathway_pvals)[ncol(pathway_pvals)] <- pval_cname
+      }
+    }
+
+    # next, for those datasets with survival-related covariates, build cox regression
+    # models and record p-values
+    if (acc %in% names(survival_covariates)) {
+      message(sprintf("Analyzing survival covariates for %s...", acc))
+
+      for (survival_covariate_name in names(survival_covariates[[acc]])) {
+        message(sprintf("Processing %s / %s (pathways)", acc, survival_covariate_name))
+
+        surv_cov <- survival_covariates[[acc]][[survival_covariate_name]]
+
+        surv <- survival::Surv(time = mdat[, surv_cov[1]], event = mdat[, surv_cov[2]])
+
+        # pathways
+        pathway_fits <- apply(pathway_expr_mat, 1, function(x) {
+          summary(survival::coxph(surv ~ x))
+        })
+
+        # extract cox regression p-values
+        pathway_cox_pvals <- as.numeric(unlist(lapply(pathway_fits, function(x) {
+          x$waldtest['pvalue']
+        })))
+
+        # add to pathway weights and fix column names
+        pathway_pvals <- cbind(pathway_pvals, pathway_cox_pvals)
+
+        cname <- make.names(paste(acc, survival_covariate_name, 'cox_pval', sep = '_'))
+
+        colnames(pathway_pvals)[ncol(pathway_pvals)] <- cname
+      }
+    }
+
+    pathway_stats <- data.frame(
+      'collection' = pathway_expr[, 1, drop = FALSE],
+      'gene_set'   = pathway_expr[, 2, drop = FALSE],
+      'mean'       = apply(pathway_expr_mat, 1, mean),
+      'median'     = apply(pathway_expr_mat, 1, median),
+      'sd'         = apply(pathway_expr_mat, 1, sd),
+      'var'        = apply(pathway_expr_mat, 1, var),
+      'mad'        = apply(pathway_expr_mat, 1, mad),
+      'kurtosis'   = apply(pathway_expr_mat, 1, kurtosis)
+    )
+
+    # hartigan's dip test of unimodality
+    pathway_dip <- apply(pathway_expr_mat, 1, dip.test)
+
+    dip_pvals <- unlist(lapply(pathway_dip, function(x) { x$p.val }))
+    pathway_stats$dip_score <- -log10(pmax(MIN_PVAL, dip_pvals))
+
+    # prepend dataset accession to column names
+    cnames <- paste0(acc, '_', colnames(pathway_stats)[-PATHWAY_ID_IND])
+    colnames(pathway_stats)[-PATHWAY_ID_IND] <- cnames
+
+    # store pathway weights
+    message(sprintf("Saving results to %s", pathway_stats_outfile))
+    message(sprintf("Saving results to %s", pathway_pvals_outfile))
+    write_csv(pathway_stats, pathway_stats_outfile)
+    write_csv(pathway_pvals, pathway_pvals_outfile)
+  } else {
+    # otherwise, if the weights already exist, load from disk
+    pathway_stats <- read_csv(pathway_stats_outfile, col_types = cols())
+    pathway_pvals <- read_csv(pathway_pvals_outfile, col_types = cols())
+  }
+}
+
+stopCluster(cl)
+```
+

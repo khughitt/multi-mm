@@ -190,9 +190,9 @@ Hash=f6b5dacb4249e24936e08afef9b08b19
 
 [R/Package/SummarizedExperiment]
 Package=SummarizedExperiment
-Version=1.14.0
+Version=1.14.1
 Source=Bioconductor
-Hash=acf2d2253869177e3bbf66a3daf95b81
+Hash=b8538ed6256a70bd355c7cc58526ac30
 
 [R/Package/TSP]
 Package=TSP
@@ -730,9 +730,9 @@ Hash=c11c47f14490dbed7013c37a1a217cc1
 
 [R/Package/limma]
 Package=limma
-Version=3.40.4
+Version=3.40.6
 Source=Bioconductor
-Hash=db09b837c5d2d02f6d2e9b33304d3da7
+Hash=3fffe88051d9d719f002124b4438e5af
 
 [R/Package/lme4]
 Package=lme4

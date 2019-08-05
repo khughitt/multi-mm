@@ -7,7 +7,7 @@ bader_files   <- Sys.glob(file.path(annot_dir, 'bader_gene_sets', 'Human_DrugBan
 dsigdb_files  <- file.path(annot_dir, 'dsigdb', '1.0', 'DSigDB_All.gmt')
 enrichr_files <- Sys.glob(file.path(annot_dir, 'enrichr', '*.txt'))
 gdsc_files    <- Sys.glob(file.path(annot_dir, 'gdsc_drug_modules', '*-nr.gmt'))
-msigdb_files  <- file.path(annot_dir, 'msigdb', 'v6.2', 'msigdb.v6.2.symbols.gmt')
+msigdb_files  <- Sys.glob(file.path(annot_dir, 'msigdb', 'v6.2', '[ch]*.symbols.gmt'))
 
 gene_set_files <- c(bader_files, dsigdb_files, enrichr_files, gdsc_files, msigdb_files)
 
@@ -18,16 +18,23 @@ names(gene_sets) <- tools::file_path_sans_ext(basename(gene_set_files))
 # remove gene set :length suffixes, if present
 names(gene_sets) <- sub(':\\d+$', '', names(gene_sets)) 
 
+# remove any leading or trailing whitespace in gene set names;
+# encountered at least one instance of this ("HEK 293 T-rex" in NCI-60 gene set
+# collection)
+for (gset in names(gene_sets)) { 
+  names(gene_sets[[gset]]) <- trimws(names(gene_sets[[gset]]))
+}
+
 # remove gene set weights, if present
 # e.g. "ANXA1,1.0" -> "ANXA1"
 for (gset in names(gene_sets)) {
   gene_sets[[gset]] <- lapply(gene_sets[[gset]], function(x) { sub(',\\d+\\.\\d+$', '', x) }) 
 }
 
-# exclude any gene sets with fewer than the required number of genes
+# exclude any gene sets which are either too large or too small
 for (gset in names(gene_sets)) {
 	set_sizes <- lapply(gene_sets[[gset]], length)
-	mask <- set_sizes >= GENE_SET_MIN_SIZE
+	mask <- (set_sizes >= GENE_SET_MIN_SIZE) & (set_sizes <= GENE_SET_MAX_SIZE)
 
 	gene_sets[[gset]] <- gene_sets[[gset]][mask]
 }

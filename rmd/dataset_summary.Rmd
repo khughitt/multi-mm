@@ -1,5 +1,5 @@
 ```{r dataset_summary, results = 'asis'}
-datasets <- read_tsv(file.path(input_dir, 'datasets.tsv')) %>%
+datasets <- read_tsv(file.path(input_dir, 'datasets.tsv'), col_types = cols()) %>%
   mutate(incl_surv = !is.na(includes_survival),
          incl_stge = !is.na(includes_disease_stage),
          incl_resp = !is.na(includes_treatment_response))

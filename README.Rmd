@@ -8,33 +8,15 @@ output:
     number_sections: true
 ---
 
-<!--
-
-TODO: July 24, 2019
-
-- Add <collection> prefix to gene set entries to account for keys (e.g. drug names)
-   that appear in multiple collections
-- Use individual MSigDB gmt files instead of combined one for easier comparison
-
-TODO: July 23, 2019
-
-- Dataset thumbnails
-  - Using an even smaller subset of genes
-  - Build mini heatmaps for each dataset, with genes / order fixed.
--->
-
 # Setup
 
 ```{r settings}
 # analysis version
-VERSION <- '2019-07-22'
+VERSION <- '2019-07-29'
 
-# maximum ratio of covariate variables to allow before exluding a gene
-# from the final score computation
-GENE_MAX_MISSING_COVARIATES <- 0.8
-
-# minimum number of genes required for gene set to be included in analysis
+# minimum and maximum number of genes required for gene set to be included in analysis
 GENE_SET_MIN_SIZE <- 5
+GENE_SET_MAX_SIZE <- 10000
 
 # minimum p-value to allow for -log10 score computation
 MIN_PVAL <- 1E-10
@@ -43,7 +25,7 @@ MIN_PVAL <- 1E-10
 PATHWAY_AGG_FUNC <- 'mean'
 
 # maximum number of threads to use
-MAX_THREADS <- 12
+MAX_THREADS <- 4
 
 # fgsea parameters
 FGSEA_NPERM <- 15000
@@ -70,16 +52,25 @@ Summary of datasets included in this analysis:
 ```{r child='rmd/load_gene_sets.Rmd'}
 ```
 
-```{r child='rmd/load_geo.Rmd'}
+```{r child='rmd/load_geo_genes.Rmd'}
 ```
 
-```{r child='rmd/load_mmrf.Rmd'}
+```{r child='rmd/load_geo_pathways.Rmd'}
+```
+
+```{r child='rmd/load_mmrf_genes.Rmd'}
+```
+
+```{r child='rmd/load_mmrf_pathways.Rmd'}
 ```
 
 ```{r child='rmd/combine_gene_weights.Rmd'}
 ```
 
 ```{r child='rmd/combine_pathway_weights.Rmd'}
+```
+
+```{r child='rmd/create_custom_gene_sets.Rmd'}
 ```
 
 # Results

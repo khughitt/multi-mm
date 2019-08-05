@@ -2,7 +2,6 @@
 library(annotables)
 library(doParallel)
 library(DataExplorer)
-library(inspectdf)
 library(diptest)
 library(e1071)
 library(foreach)
@@ -44,13 +43,19 @@ mmrf_dir   <- file.path(public_data_dir, 'mmrf_commpass/IA13')
 
 output_dir <- file.path(base_dir, 'output', VERSION)
 
-indiv_dir <- file.path(output_dir, 'individual')
-combined_dir <- file.path(output_dir, 'combined')
-fgsea_dir <- file.path(output_dir, 'fgsea')
+gene_pvals_dir    <- file.path(output_dir, 'gene_pvals')
+gene_stats_dir    <- file.path(output_dir, 'gene_stats')
+pathway_pvals_dir <- file.path(output_dir, 'pathway_pvals')
+pathway_stats_dir <- file.path(output_dir, 'pathway_stats')
 
-for (dir_ in c(indiv_dir, combined_dir, fgsea_dir)) {
+fgsea_dir    <- file.path(output_dir, 'gene_fgsea')
+gset_dir     <- file.path(output_dir, 'gene_sets')
+
+combined_dir <- file.path(output_dir, 'combined')
+
+for (dir_ in c(gene_pvals_dir, gene_stats_dir, pathway_pvals_dir, pathway_stats_dir, combined_dir, fgsea_dir, gset_dir)) {
   if (!dir.exists(dir_)) {
-    dir.create(dir_, mode = '0755')
+    dir.create(dir_, mode = '0755', recursive = TRUE)
   }
 }
 
