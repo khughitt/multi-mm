@@ -4,7 +4,7 @@
 
 ```{r fgsea_results, message = FALSE, results = 'asis'}
 # load fgsea results
-fgsea_res_all <- bind_rows(lapply(Sys.glob(file.path(output_dir, '*_fgsea_pval_results.csv')), read_csv))
+fgsea_res_all <- bind_rows(lapply(Sys.glob(file.path(fgsea_dir, '*_fgsea_pval_results.csv')), read_csv))
 
 fgsea_res_all$dataset <- str_split(fgsea_res_all$covariate, '_', simplify = TRUE)[, 1] 
 
@@ -12,13 +12,14 @@ fgsea_res_all <- fgsea_res_all %>%
   select(dataset, everything())
 
 # number of datasets a pathway was found to be enriched for for at least one
-# covariate
+# covariate; first we collapse multiple hits associated with different covariates
+# for the same dataset, then summarize
 fgsea_res_datasets <- fgsea_res_all %>%
   filter(padj < 0.05) %>%
   group_by(dataset, gene_set, pathway) %>%
   summarize(mean_padj = mean(padj)) %>%
   group_by(gene_set, pathway) %>%
-  summarize(num_datasets = n(), mean_padj = mean(mean_padj)) %>%
+  summarize(num_datasets = n(), total_log10_pval = sum(-log10(mean_padj))) %>%
   arrange(desc(num_datasets))
 
 fgsea_res_datasets %>%
@@ -45,13 +46,13 @@ fgsea_res_covariates %>%
 
 ```{r, results = 'asis'}
 # which pathways have the most statistically significant enrichment?
-fgsea_res_covariates %>%
-  filter(num_enriched >= 3) %>%
-  arrange(median_padj) %>%
+fgsea_res_all %>%
+  group_by(gene_set, pathway) %>%
+  summarize(total_log10_pval = sum(-log10(pval))) %>%
+  arrange(desc(total_log10_pval)) %>%
   head(20) %>%
   kable
 ```
-
 
 ```{r results = 'asis', include = FALSE, eval = FALSE}
 #### Relationship between covariates and enrichment results

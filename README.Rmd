@@ -19,6 +19,7 @@ GENE_SET_MIN_SIZE <- 5
 GENE_SET_MAX_SIZE <- 10000
 
 # minimum p-value to allow for -log10 score computation
+# TODO: INCREASE..
 MIN_PVAL <- 1E-10
 
 # function to use when aggregating data along pathways
