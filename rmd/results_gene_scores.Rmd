@@ -109,4 +109,29 @@ fgsea_results %>%
   kable
 ```
 
+### Top Gene Types
+
+#### All genes
+
+```{r top_gene_biotypes}
+gene_scores %>%
+  group_by(biotype) %>%
+  summarize(n = n(), mean_score = round(mean(score), 3),
+            median_score = round(median(score), 3)) %>%
+  arrange(desc(median_score)) %>%
+  kable
+```
+
+#### Top 100 genes
+
+```{r top_gene_biotypes}
+gene_scores %>%
+  head(100) %>%
+  group_by(biotype) %>%
+  summarize(n = n(), mean_score = round(mean(score), 3),
+            median_score = round(median(score), 3)) %>%
+  arrange(desc(median_score)) %>%
+  kable
+```
+
 
