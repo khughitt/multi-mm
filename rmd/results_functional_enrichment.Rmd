@@ -1,6 +1,6 @@
-### Functional Enrichment
+## Functional Enrichment
 
-#### Commonly enriched pathways / gene sets (# datasets)
+### Commonly enriched pathways / gene sets (# datasets)
 
 ```{r fgsea_results, message = FALSE, results = 'asis'}
 # load fgsea results
@@ -27,7 +27,7 @@ fgsea_res_datasets %>%
   kable
 ```
 
-#### Commonly enriched pathways / gene sets (# covariates)
+### Commonly enriched pathways / gene sets (# covariates)
 
 ```{r results = 'asis'}
 # which pathways are enriched for the most datasets / covariates?
@@ -42,7 +42,7 @@ fgsea_res_covariates %>%
   kable
 ```
 
-#### Most significantly enriched pathways / genesets
+### Most significantly enriched pathways / genesets
 
 ```{r, results = 'asis'}
 # which pathways have the most statistically significant enrichment?
@@ -55,7 +55,7 @@ fgsea_res_all %>%
 ```
 
 ```{r results = 'asis', include = FALSE, eval = FALSE}
-#### Relationship between covariates and enrichment results
+### Relationship between covariates and enrichment results
 # number of enriched annotations for each covariate assessed
 fgsea_summary <- fgsea_res_all %>% 
   filter(padj < 0.05) %>%
@@ -95,7 +95,7 @@ no_sig_results <- no_sig_results[!grepl('gene_symbol|ensgene|_mean|_median|_sd|_
 no_sig_results
 ```
 
-#### Most useful gene set collections
+### Most useful gene set collections
 
 ```{r}
 fgsea_res_collections <- fgsea_res_all %>%

@@ -68,7 +68,7 @@ gene_expr <- gene_expr %>%
 PATHWAY_ID_IND   <- 1:2
 
 if (!file.exists(pathway_expr_path)) {
-  message("Measuring pathway expression for MMRF...")
+  message("Started measuring pathway expression for MMRF...")
 
   # collapse multi-mapped gene symbols
   gene_expr_nr <- gene_expr %>%
@@ -83,8 +83,9 @@ if (!file.exists(pathway_expr_path)) {
   for (gset_num in 1:length(gene_sets)) {
     collection = names(gene_sets)[gset_num]
 
-    message(sprintf("[%d / %d] Measuring pathway expression for MMRF13a (%s)...", 
-                  gset_num, length(gene_sets), collection))
+    t1 <- Sys.time()
+    message(sprintf("[%s] Started measuring pathway expression for MMRF13a / %s... (%d / %d)", 
+                    t1, collection, gset_num, length(gene_sets)))
     
     for (gset in names(gene_sets[[collection]])) {
       dat_gset <- gene_expr_nr %>%
@@ -99,19 +100,31 @@ if (!file.exists(pathway_expr_path)) {
       gset_expr <- apply(dat_gset[, -1], 2, PATHWAY_AGG_FUNC, na.rm = TRUE)
       pathway_expr <- rbind(pathway_expr, c(collection, gset, gset_expr))
     }
-    message(sprintf("[%d / %d] Finished measuring pathway expression for MMRF13a (%s)...", 
-                    gset_num, length(gene_sets), collection))
+
+    t2 <- Sys.time()
+    message(sprintf("[%s] Finished measuring pathway expression for MMRF13a / %s [%d / %d] (time elapsed: %0.2f mins)", 
+                    t2, collection, gset_num, length(gene_sets), as.numeric(t2 - t1, units = 'mins')))
   }
 
   # combine pathway-projected expression data
   pathway_expr <- as.data.frame(pathway_expr)
   colnames(pathway_expr)[PATHWAY_ID_IND] <- c('collection', 'gene_set')
 
+  # fix column types
+  EXPR_START_IND <- 3
+
+  for (i in EXPR_START_IND:ncol(pathway_expr)) {
+    pathway_expr[, i] <- as.numeric(pathway_expr[, i])
+  }
+
   # drop any rows with zero variance (uninformative)
   mask <- apply(pathway_expr[, -PATHWAY_ID_IND], 1, var, na.rm = TRUE) > 0
   pathway_expr <- pathway_expr[mask, ]
 
   write_tsv(pathway_expr, pathway_expr_path)
+
+  # convert to tibble
+  pathway_expr <- as_tibble(pathway_expr)
 } else {
   # if pathway-level expression data exists, load from file
   pathway_expr <- read_tsv(pathway_expr_path, col_types = cols())
@@ -135,7 +148,8 @@ mmrf_clin <- mmrf_clin[match(colnames(gene_expr_raw)[-1], mmrf_clin$public_id), 
 pathway_pvals <- pathway_expr[, PATHWAY_ID_IND, drop = FALSE]
 
 for (covariate in c('iss_stage', 'ecog', 'mm_status')) {
-  message(sprintf("Processing MMRF-IA13 / %s", covariate))
+  t1 <- Sys.time()
+  message(sprintf("[%s] Processing MMRF-IA13 / %s...", t1, covariate))
 
   # get covariate column
   response <- mmrf_clin[, covariate, drop = TRUE]
@@ -178,6 +192,10 @@ for (covariate in c('iss_stage', 'ecog', 'mm_status')) {
     pathway_pvals <- cbind(pathway_pvals, dataset_pathway_pvals)
     colnames(pathway_pvals)[ncol(pathway_pvals)] <- make.names(sprintf("MMRF13a_%s_pval", covariate))
   }
+
+  t2 <- Sys.time()
+  message(sprintf("[%s] Finished processing MMRF-IA13 / %s (time elapsed: %0.2f mins)", t2, 
+                  covariate, as.numeric(t2 - t1, units = 'mins')))
 }
 ```
 
@@ -233,7 +251,8 @@ for (treatment in treatments) {
   # better.. 
   covariate <- 'first_response'
 
-  message(sprintf("Processing MMRF-IA13 / %s / %s", treatment, covariate))
+  t1 <- Sys.time()
+  message(sprintf("[%s] Processing MMRF-IA13 / %s / %s", t1, treatment, covariate))
 
   # get covariate column
   response <- mmrf_treatment_subset[, covariate, drop = TRUE]
@@ -277,6 +296,10 @@ for (treatment in treatments) {
     pathway_pvals <- cbind(pathway_pvals, dataset_pathway_pvals)
     colnames(pathway_pvals)[ncol(pathway_pvals)] <- make.names(sprintf('MMRF13a_%s_pval', treatment))
   }
+
+  t2 <- Sys.time()
+  message(sprintf("[%s] Finished processing MMRF-IA13 / %s / %s (time elapsed: %0.2f mins)", 
+                  t2, treatment, covariate, as.numeric(t2 - t1, units = 'mins')))
 }
 ```
 

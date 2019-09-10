@@ -12,13 +12,23 @@ top_pathways <- pathway_weights %>%
 ID_IND <- 1:2
 
 log10_score_func <- function(x) {
-  mean(-log10(x), na.rm = TRUE)
+  x <- x[!is.na(x)]
+  mean(-log10(pmax(x, MIN_PVAL)))
 }
 
 top_pathways$mean_log10_pval <- apply(top_pathways[, -ID_IND], 1, log10_score_func)
 
 top_pathways <- top_pathways %>%
   arrange(desc(mean_log10_pval))
+
+# create a list of all gene sets included in current analysis
+all_gsets <- unique(as.character(unlist(lapply(gene_sets, names))))
+
+# exclude any gene sets with scores, but which are not included among loaded gene sets;
+# should be a few, if any. This can occur due to different versions of collections used
+# at various times (e.g. DSigDB)
+top_pathways <- top_pathways %>%
+  filter(gene_set %in% all_gsets)
 
 # gene sets to include
 custom_gsets <- top_pathways %>%
@@ -27,7 +37,7 @@ custom_gsets <- top_pathways %>%
 
 # dataframe to store gmt output; the largest gene set encountered so far has
 # ~17,500 genes (Jensen Tissues collection)
-res <- matrix("", nrow = 10000, ncol = 18000)
+res <- matrix("", nrow = 10000, ncol = 20000)
 
 # iterate over top gene sets and add to custom GMT file
 for (i in 1:nrow(custom_gsets)) {
@@ -38,11 +48,6 @@ for (i in 1:nrow(custom_gsets)) {
   genes <- gene_sets[[collection]][[gene_set]]
 
   res[i, 1:(2 + length(genes))] <- c(gene_set, collection, genes)
-}
-
-# check to make sure gene sets all found
-if (!all(custom_gsets$gene_set %in% unlist(lapply(gene_sets, names)))) {
-  stop("gene set name mismatch!")
 }
 
 # iterate over entries and write to file

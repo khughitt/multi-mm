@@ -36,7 +36,7 @@ esets <- getGEO(accession, destdir = raw_data_dir, AnnotGPL = TRUE)
 # report data processing used
 print(as.character(pData(esets[[1]])$data_processing[1]))
 
-# load additional survival metadata
+# load additional survival metadata provided by author
 survival_dat <- read_csv(file.path(base_dir, 'metadata', 'MM survival time GSE7039.csv'))
 
 # combine samples from separate ExpressionSets

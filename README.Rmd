@@ -8,25 +8,54 @@ output:
     number_sections: true
 ---
 
+# Overview
+
+The purpose of this analysis is to combine data from publically available multiple
+myeloma gene expression datasets, in order to infer gene and pathway (gene set) level
+disease association scores or weights.
+
+Gene expression data and clinical metadata from 20 publically available multiple myeloma
+patient datasets (19 microarray and RNA-Seq experiments accessed from GEO, as well as
+the MMRF CoMMpass trial RNA-Seq dataset) are downloaded and size-factor normalization is
+performed. An additional two datasets with no associated clinical metadata are also
+analyzed with respect to gene- and pathway-level expression statistics. 
+
+Using available clinical metadata for each of the 18 datasets, logistic regression
+models (disease stage, treatment response, patient subgroup, and patient death) and cox
+survival models (progression-free or overall survival) are constructed for each
+gene/covariate and each pathway/covariate pair, resulting in a total of 36 disease
+covariate-gene and -pathways association measurements.
+
+Next, using that P-values computed in the above step, a combine "gene/pathway weight" 
+or "gene/pathway score" is computed for each gene/pathway by computing the mean -log10 
+P-value across all models. The resulting gene- and pathway-level scores thus reflect the
+average disease-association scores assessed across a wide range of myeloma datasets.
+
+Thus, genes/pathways which are correlated with some clinical outcome across several 
+or more of the datasets will tend to have lower P-values (leading to higher 
+-log10(P-values)), and appear at the top of the ranked scores.
+
+Conversely, genes/pathways which are not associated with some Myeloma phenotype or
+outcome in many of the datasets will have very low scores.
+
 # Setup
 
 ```{r settings}
 # analysis version
-VERSION <- '2019-07-29'
+VERSION <- '2019-08-23'
 
 # minimum and maximum number of genes required for gene set to be included in analysis
 GENE_SET_MIN_SIZE <- 5
 GENE_SET_MAX_SIZE <- 10000
 
 # minimum p-value to allow for -log10 score computation
-# TODO: INCREASE..
-MIN_PVAL <- 1E-10
+MIN_PVAL <- 1E-20
 
 # function to use when aggregating data along pathways
-PATHWAY_AGG_FUNC <- 'mean'
+PATHWAY_AGG_FUNC <- 'median'
 
 # maximum number of threads to use
-MAX_THREADS <- 4
+MAX_THREADS <- 8
 
 # fgsea parameters
 FGSEA_NPERM <- 15000
@@ -86,6 +115,9 @@ Summary of datasets included in this analysis:
 ```
 
 ```{r child='rmd/results_gene_scores.Rmd'}
+```
+
+```{r child='rmd/results_pathway_scores.Rmd'}
 ```
 
 # System information

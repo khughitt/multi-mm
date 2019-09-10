@@ -17,8 +17,8 @@ datasets %>%
 ```
 
 ```{r results = 'asis'}
-cat(sprintf('- # Datasets: %d\n', nrow(datasets)))
-cat(sprintf('- # Samples: %d\n',  sum(datasets$num_samples)))
+cat(sprintf('- Num. datasets: %d\n', nrow(datasets)))
+cat(sprintf('- Num. samples: %d\n',  sum(datasets$num_samples)))
 ```
 
 

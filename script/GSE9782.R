@@ -1,7 +1,7 @@
 #!/bin/env/Rscript
 #
 # Gene expression profiling and correlation with outcome in clinical trials of the proteasome inhibitor bortezomib
-# 
+#
 # Mulligan et al. (2007)
 # n = 169 patients
 #
@@ -31,7 +31,7 @@
 # Data was normalized to a Ttimmed mean of 15o and is NOT log transformed. Various
 # patient parameters are reported as well as response, TTP and survival upon treatment
 # with bortezomib or dexamethasone.
-# 
+#
 # Source: https://www.ncbi.nlm.nih.gov/bioproject/PRJNA103715
 #
 library(GEOquery)
@@ -62,15 +62,24 @@ esets <- getGEO(accession, destdir = raw_data_dir, AnnotGPL = TRUE)
 print(as.character(pData(esets[[1]])$data_processing[1]))
 print(as.character(pData(esets[[2]])$data_processing[2]))
 
-# 
+#
 # Note: some of the metadata fields appear to be incorrectly encoded, e.g.:
 #
-# > pData(eset)[, 'characteristics_ch1.9']                                                     
-# [1] PGx_Days_To_Progression = 87           PGx_Progression(0=No,1=Yes) = 1                 
-# [3] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1                 
-# [5] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1                 
-# [7] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1                 
-# [9] PGx_CensorReason = No more data        PGx_Progression(0=No,1=Yes) = 1  
+# > pData(eset)[, 'characteristics_ch1.9']
+# [1] PGx_Days_To_Progression = 87           PGx_Progression(0=No,1=Yes) = 1
+# [3] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1
+# [5] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1
+# [7] PGx_Progression(0=No,1=Yes) = 1        PGx_Progression(0=No,1=Yes) = 1
+# [9] PGx_CensorReason = No more data        PGx_Progression(0=No,1=Yes) = 1
+#
+# For the case of ch1.9, the column contains a mix of "pgx progression", 
+# "days to progress", and "censor" fields. 
+#
+
+#
+# ch1.7 - PGx_Response   (-> treatment_response)
+# ch1.8 - PGx_Responder  (-> patient_subgroup)
+#
 
 # to get around this, we will manually detect and parse those fields..
 sample_metadata <- pData(esets[[1]]) %>%
@@ -80,14 +89,14 @@ sample_metadata <- pData(esets[[1]]) %>%
     gender             = str_match(characteristics_ch1.2, '\\w+$'),
     ethnicity          = str_match(characteristics_ch1.3, '\\w+$'),
     age                = as.numeric(str_match(characteristics_ch1.4, '\\d+$')),
-    treatment_response = str_match(characteristics_ch1.7, '\\w+$'), 
+    treatment_response = str_match(characteristics_ch1.7, '\\w+$'),
     patient_subgroup   = str_match(characteristics_ch1.8, '\\w+$')) %>%
   select(geo_accession, platform_id, study_code, treatment, gender,
           ethnicity, age, treatment_response, patient_subgroup) %>%
   add_column(geo_accession2 = pData(esets[[2]])$geo_accession, .after = 1)
 
 # convert metadata from factor to character columns for parsing
-str_mdat <- pData(esets[[1]]) 
+str_mdat <- pData(esets[[1]])
 
 for (cname in colnames(str_mdat)) {
   str_mdat[, cname] <- as.character(str_mdat[, cname])
@@ -183,7 +192,7 @@ gene_symbols2 <- gene_symbols2[mask2]
 # [1] 168
 
 #head(intersect(rownames(e1), rownames(e2)))
-# [1] "200000_s_at" "200001_at"   "200002_at"   "200003_s_at" "200004_at"   "200005_at"  
+# [1] "200000_s_at" "200001_at"   "200002_at"   "200003_s_at" "200004_at"   "200005_at"
 
 # use average values for those probes..
 shared_probes <- intersect(rownames(e1), rownames(e2))

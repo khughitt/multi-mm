@@ -1,127 +1,68 @@
-### Most informative pathways / gene sets
+## Combined Pathway Weights
 
-```{r, fig.width = 6, fig.height = 6}
-ind <- match(rownames(covariate_dat), grch37$symbol)
+Combine evidence from multiple datasets in a single pathway-level score.
 
-gene_scores <- data.frame(
-  gene = rownames(covariate_dat),
-  type = grch37$biotype[ind],
-  description = grch37$description[ind],
-  mean_score = rowSums(covariate_dat, na.rm = TRUE),
-  median_score = apply(covariate_dat, 1, median, na.rm = TRUE)
+```{r results = 'asis', fig.width = 6, fig.height = 6}
+# create a dataframe with combined pathway weights
+pathway_pvals <- pathway_weights %>%
+  select(ends_with('pval'))
+
+# count number of missing values per pathway
+num_missing <- apply(pathway_pvals, 1, function(x) { sum(is.na(x)) })
+num_measurements <- ncol(pathway_pvals) - num_missing
+
+# compute -log10 of the median p-values for each pathway
+median_pvals <- apply(pathway_pvals, 1, function(x) {
+  x <- x[!is.na(x)]
+  -log10(median(pmax(x, MIN_PVAL)))
+})
+
+# create a dataframe to store combined pathway scores
+pathway_scores <- tibble(
+  collection = pathway_weights$collection,
+  gene_set = pathway_weights$gene_set,
+  score = median_pvals,
+  num_measurements,
+  num_missing
 )
 
-gene_scores <- gene_scores %>%
-  arrange(desc(median_score))
+pathway_scores <- pathway_scores %>%
+  arrange(desc(score))
 
-# store gene scores
-write_csv(gene_scores, file.path(output_dir, 'final_weights_genes.csv'))
+ggplot(pathway_scores, aes(x = score)) +
+  geom_density(alpha = 0.5)
 
-gene_scores %>% 
-  arrange(desc(mean_score)) %>%
+# pathway data is mostly complete
+table(pathway_scores$num_missing) 
+
+# store pathway scores
+write_csv(pathway_scores, file.path(output_dir, 'combined', 'pathway_weights.csv'))
+```
+
+### Top pathways
+
+#### All
+
+```{r top_pathway_scores, results = 'asis'}
+pathway_scores %>% 
   head(20) %>%
   kable
 ```
 
-#### All covariates (median)
+#### Filtered, >= 50% non-missing
 
-```{r results = 'asis'}
-gene_scores %>% 
-  arrange(desc(median_score)) %>%
+```{r top_pathway_scores, results = 'asis'}
+pathway_scores %>% 
+  filter(num_measurements >= (0.50 * ncol(pathway_pvals))) %>%
   head(20) %>%
   kable
 ```
 
-#### Treatment covariates (mean)
+#### Filtered, >= 75% non-missing
 
-```{r, fig.width = 6, fig.height = 6}
-dat <- covariate_dat[, grepl('_response$', colnames(covariate_dat))]
-
-ind <- match(rownames(dat), grch37$symbol)
-
-treatment_gene_scores <- data.frame(
-  gene = rownames(dat),
-  type = grch37$biotype[ind],
-  description = grch37$description[ind],
-  mean_score = rowSums(dat, na.rm = TRUE),
-  median_score = apply(dat, 1, median, na.rm = TRUE)
-)
-
-treatment_gene_scores %>% 
-  arrange(desc(mean_score)) %>%
+```{r top_pathway_scores, results = 'asis'}
+pathway_scores %>% 
+  filter(num_measurements >= (0.75 * ncol(pathway_pvals))) %>%
   head(20) %>%
   kable
-```
-
-#### Treatment covariates (median)
-
-```{r results = 'asis'}
-treatment_gene_scores %>% 
-  arrange(desc(median_score)) %>%
-  head(20) %>%
-  kable
-```
-
-#### Survival covariates (mean)
-
-```{r, fig.width = 6, fig.height = 6}
-dat <- covariate_dat[, grepl('_cox_|_died', colnames(covariate_dat))]
-
-ind <- match(rownames(dat), grch37$symbol)
-
-survival_gene_scores <- data.frame(
-  gene = rownames(dat),
-  type = grch37$biotype[ind],
-  description = grch37$description[ind],
-  mean_score = rowSums(dat, na.rm = TRUE),
-  median_score = apply(dat, 1, median, na.rm = TRUE)
-)
-
-survival_gene_scores %>% 
-  arrange(desc(mean_score)) %>%
-  head(20) %>%
-  kable
-```
-
-#### Survival covariates (median)
-
-```{r results = 'asis'}
-survival_gene_scores %>% 
-  arrange(desc(median_score)) %>%
-  head(20) %>%
-  kable
-```
-
-```{r}
-stopCluster(cl)
-```
-
-#### Functional Enrichment (Gene Scores)
-
-```{r fgsea, results = 'asis', warnings = FALSE}
-gene_stats <- setNames(gene_scores$mean_score, gene_scores$gene)
-
-res_all <- NULL
-
-for (gs in names(gene_sets)) {
-  set.seed(1)
-
-	res <- fgsea(gene_sets[[gs]], gene_stats, nperm = 15000, nproc = MAX_THREADS) %>%
-		select(-leadingEdge) %>%
-		arrange(padj)
-
-  res_all <- rbind(res_all, res)
-
-  res_sig <- res %>%
-    filter(padj < 0.05)
-
-	if (nrow(res_sig) > 0) {
-    cat(sprintf("\n##### %s (n = %d)\n", gs, nrow(res_sig)))
-	  print(kable(head(res_sig, 20)))
-	}
-}
-
-cat(sprintf("##### Total: %d", nrow(res_all %>% filter(padj < 0.05))))
-
-write_csv(res_all, 'output/fgsea_covariate_score_results_all.csv')
 ```

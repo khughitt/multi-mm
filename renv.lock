@@ -16,9 +16,9 @@ Repositories=
 
 [R/Package/AnnotationDbi]
 Package=AnnotationDbi
-Version=1.46.0
+Version=1.46.1
 Source=Bioconductor
-Hash=85e713bf50bfa111393b1523fc4f5e16
+Hash=dfa626c6a6862fcd21a3c06c087c0895
 
 [R/Package/BH]
 Package=BH
@@ -46,9 +46,9 @@ Hash=6d28c88067214679a36e985ca151b89b
 
 [R/Package/BiocParallel]
 Package=BiocParallel
-Version=1.18.0
+Version=1.18.1
 Source=Bioconductor
-Hash=b19b4664dc4eb8039c4a1bcab73c433a
+Hash=1b5e1a16101ff484154c41c6ed86374e
 
 [R/Package/BiocVersion]
 Package=BiocVersion
@@ -472,9 +472,9 @@ Hash=415b0a04bd29a62c0ce3c0e311c46a0b
 
 [R/Package/fgsea]
 Package=fgsea
-Version=1.10.0
+Version=1.10.1
 Source=Bioconductor
-Hash=f65d0bf0fa7a3894ea18e20059bf9ce8
+Hash=89f7ddc70dac973d2ba7c30069ec448e
 
 [R/Package/forcats]
 Package=forcats

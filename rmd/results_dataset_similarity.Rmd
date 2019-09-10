@@ -74,7 +74,7 @@ Next, average expression for the ~5,300 genes that are measured across all datas
 is compared across datasets. The total average expression within each dataset is
 normalized 
 
-```{r}
+```{r, fig.width = 6, fig.height = 4}
 # get average expression for each dataset
 dat <- gene_stats %>%
   select(gene_symbol, ends_with('mean')) %>%

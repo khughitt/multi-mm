@@ -251,7 +251,7 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
 
     # measure enrichment for covariate p-values
     for (covariate in colnames(gene_pvals)[-1]) {
-      message(sprintf("Measuring functional enrichment for %s / %s [pval]", covariate, acc)) 
+      message(sprintf("Started measuring functional enrichment for %s / %s [pval]", covariate, acc)) 
 
       for (gene_set in names(gene_sets)) {
         set.seed(1)
@@ -265,6 +265,7 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
 
         fgsea_res <- rbind(fgsea_res, cbind(covariate, gene_set, res))
       }
+      message(sprintf("Finished measuring functional enrichment for %s / %s [pval]", covariate, acc)) 
     }	
 
     # store enrichment results

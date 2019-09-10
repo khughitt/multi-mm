@@ -5,8 +5,8 @@
 cl <- makeCluster(MAX_THREADS, outfile='')
 registerDoParallel(cl)
 
-#for (acc in accessions) {
-tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 'tidyverse', 'survival')) %dopar% {
+for (acc in geo_accessions) {
+#tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 'tidyverse', 'survival')) %dopar% {
   # load gene expression data
   data_dir <- file.path(geo_dir, acc, 'processed')
 
@@ -34,7 +34,7 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
     return(NULL)
   }
 
-  message(sprintf("Processing dataset %s", acc))
+  message(sprintf("[%s] Processing dataset %s", Sys.time(), acc))
 
   # otherwise load gene expression data and sample metadata and compute weights
   gene_expr <- read_csv(gene_expr_infile, col_types = cols())
@@ -61,11 +61,14 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
       group_by(gene_symbol) %>%
       summarize_all(sum)
 
+
     for (gset_num in 1:length(gene_sets)) {
       collection <- names(gene_sets)[gset_num]
 
-      message(sprintf("[%d / %d] Measuring pathway expression for %s (%s)...", 
-                      gset_num, length(gene_sets), acc, collection))
+      t1 <- Sys.time()
+
+      message(sprintf("[%s] Started measuring pathway expression for %s / %s [%d / %d]...", 
+                      t1, acc, collection, gset_num, length(gene_sets)))
 
       for (gset in names(gene_sets[[collection]])) {
 
@@ -81,6 +84,9 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
         expr <- apply(dat_gset[, -1], 2, PATHWAY_AGG_FUNC, na.rm = TRUE)
         pathway_expr <- rbind(pathway_expr, c(collection, gset, expr))
       }
+      t2 <- Sys.time()
+      message(sprintf("[%s] Finished measuring pathway expression for  %s / %s [%d / %d] (time elapsed: %0.2f mins)", 
+                      t2, acc, collection, gset_num, length(gene_sets), as.numeric(t2 - t1, units = 'mins')))
     }
 
     # pathway expression dataframe column indices
@@ -100,8 +106,6 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
     #    14 60597 
 
     pathway_expr <- pathway_expr[mask, ]
-
-    message(sprintf("Finished measuring pathway expression for %s...", acc))
 
     write_csv(pathway_expr, pathway_expr_infile)
   } else {
@@ -129,7 +133,8 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
     if (acc %in% names(factor_covariates)) {
       # iterate over factor covariates
       for (covariate in factor_covariates[[acc]]) {
-        message(sprintf("Processing %s / %s (pathways)", acc, covariate))
+        t1 <- Sys.time()
+        message(sprintf("[%s] Processing pathways for %s / %s...", Sys.time(), acc, covariate))
 
         # get covariate column as a vector
         response <- mdat[, covariate]
@@ -164,16 +169,21 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
         pval_cname <- make.names(sprintf("%s_%s_pval", acc, covariate))
 
         colnames(pathway_pvals)[ncol(pathway_pvals)] <- pval_cname
+
+        t2 <- Sys.time()
+        message(sprintf("[%s] Finished processing pathways for %s / %s (time elapsed: %0.2f mins)", 
+                        t2, acc, covariate, as.numeric(t2 - t1, units = 'mins')))
       }
     }
 
     # next, for those datasets with survival-related covariates, build cox regression
     # models and record p-values
     if (acc %in% names(survival_covariates)) {
-      message(sprintf("Analyzing survival covariates for %s...", acc))
+      message(sprintf("[%s] Analyzing survival covariates for %s...", Sys.time(), acc))
 
       for (survival_covariate_name in names(survival_covariates[[acc]])) {
-        message(sprintf("Processing %s / %s (pathways)", acc, survival_covariate_name))
+        t1 <- Sys.time()
+        message(sprintf("[%s] Processing pathways for %s / %s...", t1, acc, survival_covariate_name))
 
         surv_cov <- survival_covariates[[acc]][[survival_covariate_name]]
 
@@ -195,6 +205,10 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
         cname <- make.names(paste(acc, survival_covariate_name, 'cox_pval', sep = '_'))
 
         colnames(pathway_pvals)[ncol(pathway_pvals)] <- cname
+#
+        t2 <- Sys.time()
+        message(sprintf("[%s] Finished processing pathways for %s / %s (time elapsed: %0.2f mins)", 
+                        t2, acc, survival_covariate_name, as.numeric(t2 - t1, units = 'mins')))
       }
     }
 
@@ -220,8 +234,6 @@ tmp <- foreach(acc = geo_accessions, .packages = c('diptest', 'e1071', 'fgsea', 
     colnames(pathway_stats)[-PATHWAY_ID_IND] <- cnames
 
     # store pathway weights
-    message(sprintf("Saving results to %s", pathway_stats_outfile))
-    message(sprintf("Saving results to %s", pathway_pvals_outfile))
     write_csv(pathway_stats, pathway_stats_outfile)
     write_csv(pathway_pvals, pathway_pvals_outfile)
   } else {

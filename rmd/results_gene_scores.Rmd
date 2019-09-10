@@ -1,4 +1,4 @@
-### Compute gene weights
+## Combined Gene Weights
 
 Combine evidence from multiple datasets in a single gene-level score.
 
@@ -9,18 +9,25 @@ gene_pvals <- gene_weights %>%
 
 # count number of missing values per gene
 num_missing <- apply(gene_pvals, 1, function(x) { sum(is.na(x)) })
+num_measurements <- ncol(gene_pvals) - num_missing
 
 # compute -log10 of the median p-values for each gene
 median_pvals <- apply(gene_pvals, 1, function(x) {
-  -log10(median(x, na.rm = TRUE))
+  x <- x[!is.na(x)]
+  -log10(median(pmax(x, MIN_PVAL)))
 })
 
 # create a dataframe to store combined gene scores
 gene_scores <- tibble(
   symbol = gene_weights$gene_symbol,
   score = median_pvals,
+  num_measurements,
   num_missing
 )
+
+# drop any genes with no measurements
+gene_scores <- gene_scores %>%
+  filter(num_measurements > 0)
 
 # add metadata and sort
 gene_mdat <- grch37 %>%
@@ -31,12 +38,6 @@ gene_mdat <- grch37 %>%
 gene_scores <- gene_scores %>%
   inner_join(gene_mdat, by = 'symbol') %>%
   arrange(desc(score))
-
-#sum(is.na(gene_scores$score))
-# [1] 40
-
-# drop any genes with missing scores
-gene_scores <- gene_scores[!is.na(gene_scores$score), ]
 
 # create a version with outliers clipped for better visualizations
 gene_scores_clipped <- gene_scores %>%
@@ -58,13 +59,42 @@ write_csv(gene_scores, file.path(output_dir, 'combined', 'gene_weights.csv'))
 
 ### Top Genes
 
+#### All
+
 ```{r top_gene_scores, results = 'asis'}
 gene_scores %>% 
   head(20) %>%
   kable
 ```
 
-#### Functional Enrichment (Gene Scores)
+#### Filtered, >= 50% non-missing
+
+```{r top_pathway_scores, results = 'asis'}
+gene_scores %>% 
+  filter(num_measurements >= (0.50 * ncol(gene_pvals))) %>%
+  head(20) %>%
+  kable
+```
+
+#### Filtered, >= 75% non-missing
+
+```{r top_pathway_scores, results = 'asis'}
+gene_scores %>% 
+  filter(num_measurements >= (0.75 * ncol(gene_pvals))) %>%
+  head(20) %>%
+  kable
+```
+
+#### Filtered, >= 90% non-missing
+
+```{r top_pathway_scores, results = 'asis'}
+gene_scores %>% 
+  filter(num_measurements >= (0.90 * ncol(gene_pvals))) %>%
+  head(20) %>%
+  kable
+```
+
+### Functional Enrichment (Gene Scores)
 
 ```{r fgsea, results = 'asis', warning = FALSE, message = FALSE}
 gene_stats <- setNames(gene_scores$score, gene_scores$symbol)
@@ -99,7 +129,7 @@ cat(sprintf("- **Total Enriched**: %d\n", nrow(fgsea_results)))
 write_csv(fgsea_results, file.path(fgsea_dir, 'fgsea_covariate_score_results.csv'))
 ```
 
-#### Functional Enrichment - Top Collections (Gene Scores)
+#### Top Collections (by Gene Scores)
 
 ```{r results='asis'}
 fgsea_results %>%
@@ -111,7 +141,17 @@ fgsea_results %>%
 
 ### Top Gene Types
 
-#### All genes
+#### Distribution of gene types (all)
+
+```{r gene_types_summary}
+gene_scores %>%
+  group_by(biotype) %>%
+  summarize(n = n()) %>%
+  arrange(desc(n)) %>%
+  kable
+```
+
+#### Average gene score by type (all)
 
 ```{r top_gene_biotypes}
 gene_scores %>%
@@ -122,16 +162,27 @@ gene_scores %>%
   kable
 ```
 
-#### Top 100 genes
+#### Average gene scores by type (top 1000)
 
 ```{r top_gene_biotypes}
 gene_scores %>%
-  head(100) %>%
+  head(1000) %>%
   group_by(biotype) %>%
   summarize(n = n(), mean_score = round(mean(score), 3),
             median_score = round(median(score), 3)) %>%
-  arrange(desc(median_score)) %>%
+  arrange(desc(n)) %>%
   kable
 ```
 
+#### Average gene scores by type (bottom 1000)
+
+```{r bottom_gene_biotypes}
+gene_scores %>%
+  tail(1000) %>%
+  group_by(biotype) %>%
+  summarize(n = n(), mean_score = round(mean(score), 3),
+            median_score = round(median(score), 3)) %>%
+  arrange(desc(n)) %>%
+  kable
+```
 

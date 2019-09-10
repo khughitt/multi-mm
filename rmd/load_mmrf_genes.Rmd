@@ -79,6 +79,10 @@ mmrf_clin <- mmrf_clin[match(colnames(gene_expr_raw)[-1], mmrf_clin$public_id), 
 #all(mmrf_clin$public_id == colnames(gene_expr_raw)[-1])
 # [1] TRUE
 
+# number of samples / patients
+cat(sprintf('- Num. patients: %d\n', length(unique(mmrf_clin$public_id))))
+cat(sprintf('- Num. samples: %d\n', nrow(mmrf_clin)))
+
 # initialize result variable; creates a dataframe with only the gene identifiers
 #gene_weights <- data.frame(ensgene = gene_expr$gene_symbol)
 #colnames(gene_expr)[1] <- 'ensgene'
@@ -250,7 +254,7 @@ for (treatment in treatments) {
 mmrf_surv <- read_csv(mmrf_surv_metadata, col_types = cols())
 
 mmrf_surv <- mmrf_surv %>%
-  select(public_id, pfsdy, pfscdy, oscdy, censos, censpfs)
+  select(public_id, pfscdy, oscdy, censos, censpfs)
 
 # limit metadata to those patients for which gene express data is present and match
 # orders
